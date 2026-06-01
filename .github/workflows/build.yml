@@ -1,4 +1,4 @@
-name: DeadZone Xiaomi ROM Build By MEZO
+name: DeadZone Xiaomi ROM Build
 
 on:
   workflow_dispatch:
