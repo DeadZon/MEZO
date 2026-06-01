@@ -1,0 +1,50 @@
+work_dir=$(pwd)
+source $work_dir/functions.sh
+unpack="java -jar bbootimg.jar unpack"
+repack="java -jar bbootimg.jar pack"
+clean="java -jar bbootimg.jar clear"
+target="$work_dir/bin/package/DISABLE_AVB/HMATools"
+
+
+cd $work_dir/bin/package/DISABLE_AVB/HMATools
+
+#Disable AVB 2.0
+if [ -f "$work_dir/build/baserom/images/boot.img" ]; then
+  patch "Found boot.img!Patching..."
+  cp -rf $work_dir/build/baserom/images/boot.img $work_dir/bin/package/DISABLE_AVB/HMATools
+fi
+
+if [ -f "boot.img" ]; then
+  $unpack >/dev/null 2>&1
+  #Unpack boot.img
+  patch "Start Process..."
+  disable_avb_verify $target >/dev/null 2>&1
+  $repack >/dev/null 2>&1
+  #Repack Boot.img
+  mv "boot.img.signed" "boot.img"
+  cp -rf "boot.img" $work_dir/build/baserom/images/
+  #Clean WorkSpace
+  $clean >/dev/null 2>&1
+  patch "Patching Boot Successfully!"
+fi
+
+
+if [ -f "$work_dir/build/baserom/images/vendor_boot.img" ]; then
+  patch "Found vendor_boot.img!Patching..."
+  cp -rf $work_dir/build/baserom/images/vendor_boot.img $work_dir/bin/package/DISABLE_AVB/HMATools
+fi
+
+if [ -f "vendor_boot.img" ]; then
+  #Unpack vendor_boot.img
+  patch "Start Process..."
+  $unpack >/dev/null 2>&1
+  disable_avb_verify $target >/dev/null 2>&1
+  #Repack vendor_boot.img
+  $repack >/dev/null 2>&1
+  rm -rf vendor_boot.img
+  mv "vendor_boot.img.signed" "vendor_boot.img"
+  cp -rf vendor_boot.img $work_dir/build/baserom/images/
+  #Clean WorkSpace
+  $clean >/dev/null 2>&1
+  patch "Patching Vendor Boot Successfully!"
+fi
