@@ -182,14 +182,7 @@ jobs:
           PIXELDRAIN_URL=""
           REPORT="output/reports/pixeldrain_upload_report.json"
           if [ -f "$REPORT" ]; then
-            PIXELDRAIN_URL=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('$REPORT'))
-    print(d.get('url', ''))
-except Exception:
-    pass
-" 2>/dev/null || echo "")
+            PIXELDRAIN_URL=$(python3 -c "import json; d=json.load(open('$REPORT')); print(d.get('url',''))" 2>/dev/null || echo "")
           fi
           sudo -E python3 scripts/telegram.py finish OK "$PIXELDRAIN_URL"
 
