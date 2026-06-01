@@ -1,7 +1,6 @@
-name: DeadZone Xiaomi ROM Build
+name: DeadZone Xiaomi ROM Build (DISABLED — use mezo_mtk.yml or mezo_snapdragon.yml)
 
 on:
-  workflow_dispatch:
     inputs:
       input_url:
         description: 'URL of the ROM to build'

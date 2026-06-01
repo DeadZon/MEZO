@@ -1,0 +1,199 @@
+name: MEZO ROM Build — Snapdragon
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_url:
+        description: 'ROM download URL'
+        required: true
+      notify_telegram:
+        description: 'Live Telegram notifications'
+        type: boolean
+        default: false
+      upload_pixeldrain:
+        description: 'Upload final ZIP to PixelDrain'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TG_SOC: snapdragon
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+      PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+
+    steps:
+      - name: Clean runner
+        run: |
+          docker rmi $(docker images -q) || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php || true
+          sudo apt -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt -y autoremove --purge || true
+          sudo apt clean || true
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Set timezone
+        run: sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+
+      - name: Install OpenJDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Install dependencies
+        run: sudo bash setup.sh
+
+      - name: Set permissions
+        run: sudo chmod 777 -R *
+
+      # ── Telegram: build started ───────────────────────────────────────────
+      - name: Telegram - Started
+        if: ${{ inputs.notify_telegram }}
+        run: sudo -E python3 scripts/telegram.py start snapdragon
+
+      # ── Build ROM (with live log watcher) ─────────────────────────────────
+      - name: Build ROM
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          set +eo pipefail
+
+          LOG=/tmp/mezo_build.log
+          : > "$LOG"
+
+          if [ "${{ inputs.notify_telegram }}" = "true" ]; then
+            rm -f /tmp/tg_watch_stop
+            sudo -E python3 scripts/tg_watch.py "$LOG" unpack &
+            TG_PID=$!
+          fi
+
+          sudo bash build.sh "$INPUT_URL" 2>&1 | tee "$LOG"
+          STEP_EXIT=${PIPESTATUS[0]}
+
+          if [ "${{ inputs.notify_telegram }}" = "true" ]; then
+            touch /tmp/tg_watch_stop
+            sleep 3
+            sudo kill "$TG_PID" 2>/dev/null || true
+          fi
+
+          set -eo pipefail
+          exit $STEP_EXIT
+
+      - name: Telegram - Build Done
+        if: ${{ inputs.notify_telegram && success() }}
+        run: |
+          sudo -E python3 scripts/telegram.py update build_rom OK
+          sudo -E python3 scripts/telegram.py update pack_rom RUN
+
+      # ── Pack ROM (with live log watcher) ──────────────────────────────────
+      - name: Pack ROM
+        env:
+          INPUT_URL: ${{ inputs.input_url }}
+        run: |
+          set +eo pipefail
+
+          LOG=/tmp/mezo_pack.log
+          : > "$LOG"
+
+          if [ "${{ inputs.notify_telegram }}" = "true" ]; then
+            rm -f /tmp/tg_watch_stop
+            sudo -E python3 scripts/tg_watch.py "$LOG" rebuild &
+            TG_PID=$!
+          fi
+
+          sudo bash packROM.sh 2>&1 | tee "$LOG"
+          STEP_EXIT=${PIPESTATUS[0]}
+
+          if [ "${{ inputs.notify_telegram }}" = "true" ]; then
+            touch /tmp/tg_watch_stop
+            sleep 3
+            sudo kill "$TG_PID" 2>/dev/null || true
+          fi
+
+          set -eo pipefail
+          exit $STEP_EXIT
+
+      - name: Telegram - Pack Done
+        if: ${{ inputs.notify_telegram && success() }}
+        run: sudo -E python3 scripts/telegram.py update pack_rom OK
+
+      # ── Upload ROM to OneDrive ─────────────────────────────────────────────
+      - name: Setup Rclone
+        run: |
+          sudo -E bash uploadROM.sh setup "${{ secrets.GH_TOKEN }}" "${{ secrets.GH_REPO }}" "${{ secrets.RCLONE_TOKEN_PATH }}"
+
+      - name: Telegram - OneDrive Upload Starting
+        if: ${{ inputs.notify_telegram && success() }}
+        run: sudo -E python3 scripts/telegram.py update upload_onedrive RUN
+
+      - name: Upload ROM
+        run: sudo -E bash uploadROM.sh
+
+      # ── PixelDrain upload ─────────────────────────────────────────────────
+      - name: Telegram - PixelDrain Upload Starting
+        if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
+        run: sudo -E python3 scripts/telegram.py update upload_pixeldrain RUN
+
+      - name: PixelDrain Upload
+        if: ${{ inputs.upload_pixeldrain && success() }}
+        run: |
+          ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
+          if [ -z "$ZIP_PATH" ]; then
+            echo "::error::Cannot find final ZIP path in output/reports/final_zip_path.txt"
+            exit 1
+          fi
+          echo "[PIXELDRAIN] Uploading: $ZIP_PATH"
+          sudo -E python3 scripts/pixeldrain_upload.py "$ZIP_PATH"
+
+      - name: Telegram - PixelDrain Done
+        if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
+        run: sudo -E python3 scripts/telegram.py update upload_pixeldrain OK
+
+      # ── Final Telegram status ──────────────────────────────────────────────
+      - name: Telegram - Success
+        if: ${{ inputs.notify_telegram && success() }}
+        run: |
+          PIXELDRAIN_URL=""
+          REPORT="output/reports/pixeldrain_upload_report.json"
+          if [ -f "$REPORT" ]; then
+            PIXELDRAIN_URL=$(python3 -c "import json; d=json.load(open('$REPORT')); print(d.get('url',''))" 2>/dev/null || echo "")
+          fi
+
+          ZIP_SIZE=""
+          ZIP_NAME=""
+          ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
+          if [ -f "$ZIP_PATH" ]; then
+            ZIP_NAME=$(basename "$ZIP_PATH")
+            ZIP_SIZE=$(python3 -c "import os; print(f'{os.path.getsize(\"$ZIP_PATH\")/1024/1024:.1f}')" 2>/dev/null || echo "")
+          fi
+
+          sudo -E python3 scripts/telegram.py finish OK \
+            --url "$PIXELDRAIN_URL" \
+            --zip "${ZIP_NAME:-}" \
+            --size "${ZIP_SIZE:-0}"
+
+      - name: Telegram - Failed
+        if: ${{ inputs.notify_telegram && failure() }}
+        run: sudo -E python3 scripts/telegram.py finish FAIL
+
+      # ── Cleanup ───────────────────────────────────────────────────────────
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          sudo rm -rf "${{ github.workspace }}/out"   || true
+          sudo rm -rf "${{ github.workspace }}/build" || true
+          rm -f /tmp/tg_watch_stop /tmp/mezo_build.log /tmp/mezo_pack.log || true

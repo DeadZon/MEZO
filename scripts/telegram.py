@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""Telegram live build notifications for MEZO ROM builder.
-Ported from DeadZon/DeadZone factory/core/telegram.py.
+"""Rich live Telegram dashboard for MEZO ROM Builder.
+Ported and adapted from DeadZon/DeadZone factory/core/telegram.py.
 
-Usage:
-  telegram.py start
-  telegram.py update <stage_id> <RUN|OK|FAIL>
-  telegram.py finish <OK|FAIL> [pixeldrain_url]
+Public API (importable by tg_watch.py):
+  start_build(soc)
+  update_stage(stage_id, status, action="", force=True)
+  push_log_line(line)
+  heartbeat()
+  finish_build(status, upload_url="", final_zip_name="", final_zip_size_mib=0.0,
+               error_text="", failed_stage="")
 
-Credentials (set as env vars, all optional — missing means disabled):
-  TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
-  TELEGRAM_MTK_BOT_TOKEN / TELEGRAM_MTK_CHAT_ID
-  TELEGRAM_SNAPDRAGON_BOT_TOKEN / TELEGRAM_SNAPDRAGON_CHAT_ID
+CLI:
+  telegram.py start [soc]
+  telegram.py update <stage_id> <RUN|OK|FAIL> [action]
+  telegram.py heartbeat
+  telegram.py finish <OK|FAIL> [--url U] [--zip Z] [--size S] [--error E] [--failed-stage F]
 
-State persisted to: output/reports/telegram_status.json
+State:  output/reports/telegram_status.json
+Report: output/reports/telegram_live_report.txt
 """
 from __future__ import annotations
 
@@ -24,81 +29,152 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-STATE_FILE = Path("output/reports/telegram_status.json")
-MAX_TEXT_LEN = 4000
+# ── Constants ─────────────────────────────────────────────────────────────────
 
-# Ordered pipeline stages shown in the timeline block.
+STATE_FILE        = Path("output/reports/telegram_status.json")
+REPORT_FILE       = Path("output/reports/telegram_live_report.txt")
+MAX_TEXT          = 4000
+MIN_EDIT_INTERVAL = 8.0   # minimum seconds between edits (rate-limit buffer)
+LOG_BUFFER_MAX    = 8     # how many log lines to keep visible
+
+# ── Pipeline stage definitions ────────────────────────────────────────────────
+#   (id, icon, display label)
 STAGES: list[tuple[str, str, str]] = [
-    ("build_rom",          "Building ROM",             "ROM built"),
-    ("pack_rom",           "Packing ROM",              "ROM packed"),
-    ("upload_pixeldrain",  "Uploading to PixelDrain",  "PixelDrain upload done"),
-    ("upload_onedrive",    "Uploading to OneDrive",    "OneDrive upload done"),
+    ("setup",             "🚀", "Setup & Checkout"),
+    ("unpack",            "📦", "Extract / Unpack"),
+    ("mods",              "🧩", "Mods & Patches"),
+    ("rebuild",           "🛠",  "Rebuild Partitions"),
+    ("super",             "💾", "Build Super Image"),
+    ("vbmeta",            "🔐", "vbmeta"),
+    ("zip",               "🗜",  "Create Final ZIP"),
+    ("upload_onedrive",   "☁️",  "OneDrive Upload"),
+    ("upload_pixeldrain", "☁️",  "PixelDrain Upload"),
 ]
 
+_STAGE_ICON  = {s[0]: s[1] for s in STAGES}
+_STAGE_LABEL = {s[0]: s[2] for s in STAGES}
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _read_device_info() -> dict:
-    """Read device metadata from MEZO detection output files (best-effort)."""
+# ── Device / GitHub context readers ──────────────────────────────────────────
+
+def _read_device() -> dict:
+    """Read MEZO ddevice output files (best-effort; empty if not yet written)."""
     mapping = {
-        "device_f":      "bin/ddevice/device_f.txt",
-        "device_code":   "bin/ddevice/device_code.txt",
-        "base_rom_code": "bin/ddevice/base_rom_code.txt",
-        "rom_os":        "bin/ddevice/rom_os.txt",
-        "os_type":       "bin/ddevice/os_type.txt",
-        "androidver":    "bin/ddevice/androidver.txt",
+        "device": "bin/ddevice/device_f.txt",
+        "code":   "bin/ddevice/device_code.txt",
+        "rom":    "bin/ddevice/base_rom_code.txt",
+        "os":     "bin/ddevice/rom_os.txt",
+        "ostype": "bin/ddevice/os_type.txt",
+        "ver":    "bin/ddevice/androidver.txt",
     }
     info: dict = {}
     for key, fname in mapping.items():
-        try:
-            p = Path(fname)
-            if p.is_file():
-                val = p.read_text(encoding="utf-8", errors="replace").strip()
-                if val:
-                    info[key] = val
-        except Exception:
-            pass
+        p = Path(fname)
+        if p.is_file():
+            val = p.read_text(encoding="utf-8", errors="replace").strip()
+            if val:
+                info[key] = val
     return info
 
 
+def _github_ctx() -> dict:
+    """Read GitHub Actions environment variables."""
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo   = os.environ.get("GITHUB_REPOSITORY", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    return {
+        "workflow": os.environ.get("GITHUB_WORKFLOW", "MEZO"),
+        "run":      os.environ.get("GITHUB_RUN_NUMBER", ""),
+        "actor":    os.environ.get("GITHUB_ACTOR", ""),
+        "sha":      (os.environ.get("GITHUB_SHA", "") or "")[:7],
+        "branch":   os.environ.get("GITHUB_REF_NAME", ""),
+        "url":      f"{server}/{repo}/actions/runs/{run_id}" if run_id else "",
+        "soc":      os.environ.get("TG_SOC", ""),
+    }
+
+
+# ── Credentials ───────────────────────────────────────────────────────────────
+
 def _collect_credentials() -> list[tuple[str, str]]:
-    """Return all valid (token, chat_id) pairs from env vars, deduped."""
+    """Return all valid (token, chat_id) pairs from env, deduplicated by chat_id."""
     candidates = [
-        (os.environ.get("TELEGRAM_BOT_TOKEN", ""),          os.environ.get("TELEGRAM_CHAT_ID", "")),
-        (os.environ.get("TELEGRAM_MTK_BOT_TOKEN", ""),      os.environ.get("TELEGRAM_MTK_CHAT_ID", "")),
+        (os.environ.get("TELEGRAM_BOT_TOKEN", ""),            os.environ.get("TELEGRAM_CHAT_ID", "")),
+        (os.environ.get("TELEGRAM_MTK_BOT_TOKEN", ""),        os.environ.get("TELEGRAM_MTK_CHAT_ID", "")),
         (os.environ.get("TELEGRAM_SNAPDRAGON_BOT_TOKEN", ""), os.environ.get("TELEGRAM_SNAPDRAGON_CHAT_ID", "")),
     ]
     seen: set[str] = set()
     result: list[tuple[str, str]] = []
-    for token, chat_id in candidates:
-        token = token.strip()
-        chat_id = chat_id.strip()
-        if token and chat_id and chat_id not in seen:
-            seen.add(chat_id)
-            result.append((token, chat_id))
+    for tok, cid in candidates:
+        tok, cid = tok.strip(), cid.strip()
+        if tok and cid and cid not in seen:
+            seen.add(cid)
+            result.append((tok, cid))
     return result
 
 
-def _load_state() -> dict:
+# ── State helpers ─────────────────────────────────────────────────────────────
+
+def _empty_state() -> dict:
+    return {
+        "chats":               {},
+        "started_at":          time.time(),
+        "soc":                 "",
+        "current_stage_id":    "setup",
+        "current_stage_label": "Setup & Checkout",
+        "current_action":      "",
+        "log_buffer":          [],
+        "events":              [],
+        "failed_stage":        "",
+        "error_text":          "",
+        "upload_url":          "",
+        "final_zip_name":      "",
+        "final_zip_size_mib":  0.0,
+        "last_edit_at":        0.0,
+        "status":              "running",
+    }
+
+
+def load_state() -> dict:
     try:
         if STATE_FILE.is_file():
             return json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         pass
-    return {"chats": {}, "events": [], "started_at": time.time()}
+    return _empty_state()
 
 
-def _save_state(state: dict) -> None:
+def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-# ── Telegram API ─────────────────────────────────────────────────────────────
+def _write_report(state: dict) -> None:
+    try:
+        REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "MEZO Telegram Live Report",
+            "=" * 40,
+            f"status:  {state.get('status', '')}",
+            f"stage:   {state.get('current_stage_id', '')} — {state.get('current_stage_label', '')}",
+            f"action:  {state.get('current_action', '')}",
+            "",
+            "events:",
+        ]
+        for ev in state.get("events", []):
+            lines.append(f"  [{ev.get('status','?'):4s}] {ev.get('id','')}: {ev.get('label','')}")
+        if state.get("upload_url"):
+            lines.append(f"\nPixelDrain: {state['upload_url']}")
+        REPORT_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+# ── Telegram API ──────────────────────────────────────────────────────────────
 
 def _post(token: str, method: str, payload: dict) -> dict:
-    url = f"https://api.telegram.org/bot{token}/{method}"
+    url  = f"https://api.telegram.org/bot{token}/{method}"
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
+    req  = urllib.request.Request(
         url, data=data,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -110,6 +186,8 @@ def _post(token: str, method: str, payload: dict) -> dict:
         body = exc.read().decode("utf-8", errors="replace")
         if "message is not modified" in body.lower():
             return {"ok": True}
+        if "too many requests" in body.lower():
+            return {"ok": False, "rate_limit": True, "error": f"HTTP {exc.code}: rate limited"}
         return {"ok": False, "error": f"HTTP {exc.code}: {body[:200]}"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -118,7 +196,7 @@ def _post(token: str, method: str, payload: dict) -> dict:
 def _send(token: str, chat_id: str, text: str) -> dict:
     return _post(token, "sendMessage", {
         "chat_id": chat_id,
-        "text": text[:MAX_TEXT_LEN],
+        "text": text[:MAX_TEXT],
         "disable_web_page_preview": True,
     })
 
@@ -127,217 +205,399 @@ def _edit(token: str, chat_id: str, message_id: int, text: str) -> dict:
     return _post(token, "editMessageText", {
         "chat_id": chat_id,
         "message_id": message_id,
-        "text": text[:MAX_TEXT_LEN],
+        "text": text[:MAX_TEXT],
         "disable_web_page_preview": True,
     })
 
 
 # ── Message formatter ─────────────────────────────────────────────────────────
 
-def _format_message(state: dict, build_status: str, upload_url: str = "") -> str:
-    build_status = build_status.upper()
-    is_running = build_status == "RUNNING"
-    is_done    = build_status in ("OK", "DONE")
+def _elapsed_str(started_at: float) -> str:
+    secs = int(max(0, time.time() - started_at))
+    h, rem = divmod(secs, 3600)
+    m, s   = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _progress_block(events: list[dict]) -> list[str]:
+    status_map: dict[str, str] = {}
+    for ev in events:
+        sid = ev.get("id", "")
+        if sid:
+            status_map[sid] = ev.get("status", "")
+
+    running_found = False
+    lines: list[str] = []
+    for sid, icon, label in STAGES:
+        st = status_map.get(sid, "")
+        if st == "OK":
+            lines.append(f"✅ {label}")
+        elif st == "RUN":
+            lines.append(f"🟡 {label}")
+            running_found = True
+        elif st in ("FAIL", "ERROR"):
+            lines.append(f"❌ {label}")
+        elif running_found:
+            lines.append(f"⚪ {label}")
+        else:
+            lines.append(f"⚪ {label}")
+    return lines
+
+
+def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
+    status = build_status.upper()
+    is_running = status == "RUNNING"
+    is_done    = status in ("OK", "DONE")
     is_failed  = not is_running and not is_done
 
-    info = _read_device_info()
-    elapsed_secs = int(max(0, time.time() - state.get("started_at", time.time())))
-    mins, secs = divmod(elapsed_secs, 60)
-    elapsed_str = f"{mins:02d}:{secs:02d}"
+    dev = _read_device()
+    gh  = _github_ctx()
 
-    device   = info.get("device_f") or info.get("device_code") or "Detecting..."
-    rom_ver  = info.get("base_rom_code") or "Unknown"
-    os_label = info.get("rom_os") or info.get("os_type") or "HyperOS"
+    soc       = state.get("soc") or gh.get("soc") or ""
+    soc_label = {"mtk": "MTK", "snapdragon": "Snapdragon"}.get(soc.lower(), soc.upper() or "—")
+    device    = dev.get("device") or dev.get("code") or "Detecting…"
+    rom_ver   = dev.get("rom") or "—"
+    android   = dev.get("ver") or ""
+    rom_os    = dev.get("os") or dev.get("ostype") or "HyperOS"
+    os_label  = f"{rom_os} / Android {android}" if android else rom_os
 
-    lines: list[str] = []
+    branch    = gh.get("branch") or "—"
+    sha       = gh.get("sha") or "—"
+    run_num   = gh.get("run") or "—"
+    actor     = gh.get("actor") or "—"
+    run_url   = gh.get("url") or ""
 
+    elapsed        = _elapsed_str(state.get("started_at", time.time()))
+    stage_id       = state.get("current_stage_id", "")
+    stage_label    = state.get("current_stage_label") or _STAGE_LABEL.get(stage_id, stage_id)
+    stage_icon     = _STAGE_ICON.get(stage_id, "📍")
+    cur_action     = state.get("current_action", "")
+    log_buf        = state.get("log_buffer", [])
+    events         = state.get("events", [])
+
+    out: list[str] = []
+
+    # Header
     if is_done:
-        lines.append("✅ MEZO Build Completed")
+        out.append("✅ MEZO Build Finished")
     elif is_failed:
-        lines.append("❌ MEZO Build Failed")
+        out.append("❌ MEZO Build Failed")
     else:
-        lines.append("🔥 MEZO ROM Builder Live")
+        out.append("🚀 MEZO ROM Builder Live")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━")
+    out.append("")
 
-    lines.append("")
-    lines.append(f"Device:  {device}")
-    lines.append(f"ROM:     {rom_ver}")
-    lines.append(f"OS:      {os_label}")
-    lines.append(f"Status:  {'RUNNING' if is_running else ('DONE' if is_done else 'FAILED')}")
-    lines.append(f"Elapsed: {elapsed_str}")
+    # Build metadata
+    out.append(f"📱 Device:  {device}")
+    out.append(f"🧩 SoC:     {soc_label}")
+    out.append(f"💿 ROM:     {rom_ver}")
+    out.append(f"🤖 OS:      {os_label}")
+    out.append(f"🌿 Branch:  {branch}")
+    out.append(f"🔖 Commit:  {sha}")
+    out.append(f"🔢 Run:     #{run_num}")
+    out.append(f"👤 Actor:   {actor}")
+    out.append("")
 
-    # Collapse events: stage_id → latest status
-    collapsed: dict[str, str] = {}
-    for ev in state.get("events", []):
-        name = ev.get("name", "")
-        if name:
-            collapsed[name] = ev.get("status", "")
+    # Status / progress
+    if is_done:
+        out.append(f"📊 Status:  ✅ SUCCESS")
+        out.append(f"⏱ Total:   {elapsed}")
+    elif is_failed:
+        out.append(f"📊 Status:  ❌ FAILED")
+        out.append(f"⏱ Total:   {elapsed}")
+    else:
+        out.append(f"📊 Status:  🟡 RUNNING")
+        out.append(f"⏱ Elapsed: {elapsed}")
+        out.append(f"📍 Stage:   {stage_icon} {stage_label}")
+        if cur_action:
+            out.append(f"🔧 Now:     {cur_action[:65]}")
 
-    # Current active stage label (running only)
-    if is_running:
-        for sid, label, _ in STAGES:
-            if collapsed.get(sid) == "RUN":
-                lines.append("")
-                lines.append(f"▶ {label}")
-                break
+    # Recent log lines (running only)
+    if log_buf and is_running:
+        out.append("")
+        out.append("📝 Recent:")
+        for ln in log_buf[-6:]:
+            out.append(f"  {ln[:72]}")
 
-    # Timeline block
-    running_idx = -1
-    for i, (sid, _, _) in enumerate(STAGES):
-        if collapsed.get(sid) == "RUN":
-            running_idx = i
-            break
+    # Progress timeline
+    out.append("")
+    out.append("Progress:")
+    out.extend(_progress_block(events))
 
-    timeline: list[str] = []
-    for i, (sid, label, done_label) in enumerate(STAGES):
-        st = collapsed.get(sid, "")
-        if st == "OK":
-            timeline.append(f"✅ {done_label}")
-        elif st == "RUN":
-            timeline.append(f"🔄 {label}")
-        elif st == "FAIL":
-            timeline.append(f"❌ {label}")
-        elif running_idx >= 0 and i > running_idx:
-            timeline.append(f"⏳ {label}")
+    # Success details
+    if is_done:
+        actual_url = upload_url or state.get("upload_url", "")
+        if actual_url:
+            out.append("")
+            out.append(f"☁️ PixelDrain: {actual_url}")
+        zip_name = state.get("final_zip_name", "")
+        zip_mib  = state.get("final_zip_size_mib", 0.0)
+        if zip_name:
+            out.append(f"📦 ZIP:  {zip_name}")
+        if zip_mib:
+            out.append(f"📏 Size: {zip_mib:.1f} MiB")
 
-    if timeline:
-        lines.append("")
-        lines.append("Timeline:")
-        lines.extend(timeline)
-
-    if is_done and upload_url:
-        lines.append("")
-        lines.append(f"PixelDrain: {upload_url}")
-
+    # Failure details
     if is_failed:
         failed = state.get("failed_stage", "")
+        err    = state.get("error_text", "")
         if failed:
-            lines.append("")
-            lines.append(f"Failed at: {failed}")
+            out.append("")
+            out.append(f"📍 Failed: {_STAGE_LABEL.get(failed, failed)}")
+        if err:
+            out.append(f"💥 Error:  {err[:150]}")
 
-    return "\n".join(lines)
+    # Footer
+    if run_url:
+        out.append("")
+        out.append(f"🔗 {run_url}")
+
+    return "\n".join(out)
 
 
-# ── Commands ──────────────────────────────────────────────────────────────────
+# ── Core push helper ──────────────────────────────────────────────────────────
 
-def cmd_start() -> None:
+def push_update(state: dict, text: str, *, force: bool = False) -> bool:
+    """Edit the live message for all tracked chats.
+    Returns True if at least one chat was updated.
+    Respects MIN_EDIT_INTERVAL unless force=True.
+    """
+    now     = time.time()
+    elapsed = now - state.get("last_edit_at", 0)
+
+    if not force and elapsed < MIN_EDIT_INTERVAL:
+        return False
+
+    chats  = state.get("chats", {})
+    any_ok = False
+
+    for chat_id, info in chats.items():
+        token  = info.get("token", "")
+        msg_id = info.get("message_id")
+        if not token or not msg_id:
+            continue
+
+        resp = _edit(token, chat_id, msg_id, text)
+        if resp.get("ok"):
+            result = resp.get("result") or {}
+            if isinstance(result, dict) and result.get("message_id"):
+                info["message_id"] = int(result["message_id"])
+            any_ok = True
+        elif resp.get("rate_limit"):
+            print("[TELEGRAM] Rate limited — skipping edit", file=sys.stderr)
+            return False
+        else:
+            # Fallback: send a new message to this chat
+            fb = _send(token, chat_id, text)
+            if fb.get("ok"):
+                result = fb.get("result") or {}
+                if isinstance(result, dict) and result.get("message_id"):
+                    info["message_id"] = int(result["message_id"])
+                any_ok = True
+            else:
+                err = resp.get("error") or fb.get("error") or "unknown"
+                print(f"[TELEGRAM] Edit+fallback failed ...{chat_id[-4:]}: {err}", file=sys.stderr)
+
+    if any_ok:
+        state["last_edit_at"] = now
+    return any_ok
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def start_build(soc: str = "") -> None:
+    """Send the initial live Telegram message and persist state."""
     credentials = _collect_credentials()
     if not credentials:
-        print("[TELEGRAM] No credentials found — notifications disabled", file=sys.stderr)
+        print("[TELEGRAM] No credentials — notifications disabled", file=sys.stderr)
+        save_state(_empty_state())
         return
 
-    state: dict = {"chats": {}, "events": [], "started_at": time.time()}
-    state["events"].append({"name": "started", "status": "RUN"})
+    gh  = _github_ctx()
+    soc = soc or gh.get("soc") or ""
 
-    text = _format_message(state, "RUNNING")
+    state = _empty_state()
+    state["soc"] = soc
+    state["events"].append({"id": "setup", "status": "OK", "label": "Setup & Checkout"})
+
+    text = format_message(state, "RUNNING")
 
     for token, chat_id in credentials:
         resp = _send(token, chat_id, text)
         if resp.get("ok"):
             result = resp.get("result") or {}
             msg_id = result.get("message_id") if isinstance(result, dict) else None
-            state["chats"][chat_id] = {"token": token, "message_id": int(msg_id) if msg_id else None}
-            print(f"[TELEGRAM] Started → chat ...{chat_id[-4:]} msg_id={msg_id}")
+            state["chats"][chat_id] = {
+                "token":      token,
+                "message_id": int(msg_id) if msg_id else None,
+            }
+            print(f"[TELEGRAM] Started → ...{chat_id[-4:]} msg_id={msg_id}")
         else:
-            print(f"[TELEGRAM] Send failed chat ...{chat_id[-4:]}: {resp.get('error', 'unknown')}", file=sys.stderr)
+            print(f"[TELEGRAM] Start failed ...{chat_id[-4:]}: {resp.get('error','?')}", file=sys.stderr)
 
-    _save_state(state)
+    state["last_edit_at"] = time.time()
+    save_state(state)
+    _write_report(state)
 
 
-def cmd_update(stage: str, status: str) -> None:
-    state = _load_state()
-    state.setdefault("events", []).append({"name": stage, "status": status.upper()})
+def update_stage(stage_id: str, status: str, action: str = "", *, force: bool = True) -> None:
+    """Record a stage status change and push an edit."""
+    state  = load_state()
+    status = status.upper()
+    label  = _STAGE_LABEL.get(stage_id, stage_id)
 
-    credentials = _collect_credentials()
-    chats = state.get("chats", {})
+    state.setdefault("events", []).append({"id": stage_id, "status": status, "label": label})
 
-    if not credentials or not chats:
-        _save_state(state)
+    if status == "RUN":
+        state["current_stage_id"]    = stage_id
+        state["current_stage_label"] = label
+        if action:
+            state["current_action"] = action
+
+    if status in ("FAIL", "ERROR"):
+        state["failed_stage"] = stage_id
+        state["status"]       = "failed"
+
+    build_status = "FAILED" if status in ("FAIL", "ERROR") else "RUNNING"
+    text = format_message(state, build_status)
+    push_update(state, text, force=force)
+    save_state(state)
+    _write_report(state)
+
+
+def push_log_line(line: str) -> None:
+    """Append a log line to the buffer and conditionally push a Telegram edit."""
+    state = load_state()
+    buf   = state.setdefault("log_buffer", [])
+    line  = line.strip()
+    if not line:
         return
 
-    text = _format_message(state, "RUNNING")
+    # Map to emoji-prefixed entry
+    if "[MODS]"      in line: icon = "🧩"
+    elif "[PATCH]"   in line: icon = "🔧"
+    elif "[UNPACK"   in line: icon = "📦"
+    elif "[REPACK]"  in line: icon = "🛠"
+    elif "[UPLOADING]" in line: icon = "☁️"
+    elif "[ERROR]"   in line: icon = "❌"
+    elif "[WARN]"    in line: icon = "⚠️"
+    elif "[INFO]"    in line: icon = "ℹ️"
+    else:                      icon = "▸"
 
-    for token, chat_id in credentials:
-        chat_info = chats.get(chat_id)
-        if not chat_info:
-            continue
-        msg_id = chat_info.get("message_id")
-        if msg_id is None:
-            continue
-        resp = _edit(token, chat_id, msg_id, text)
-        if resp.get("ok"):
-            result = resp.get("result") or {}
-            if isinstance(result, dict) and result.get("message_id"):
-                chats[chat_id]["message_id"] = int(result["message_id"])
-            print(f"[TELEGRAM] Updated → chat ...{chat_id[-4:]} stage={stage} status={status}")
-        else:
-            # Fallback: send new message if edit fails
-            fallback = _send(token, chat_id, text)
-            if fallback.get("ok"):
-                fresult = fallback.get("result") or {}
-                if isinstance(fresult, dict) and fresult.get("message_id"):
-                    chats[chat_id]["message_id"] = int(fresult["message_id"])
-            else:
-                print(f"[TELEGRAM] Update failed chat ...{chat_id[-4:]}: {resp.get('error', '')}", file=sys.stderr)
+    buf.append(f"{icon} {line}")
+    if len(buf) > LOG_BUFFER_MAX:
+        buf.pop(0)
+    state["log_buffer"] = buf
 
-    _save_state(state)
+    # Extract current action from known prefixes
+    for pfx in ("[MODS] - ", "[PATCH] - ", "[UNPACK] - ", "[REPACK] - ",
+                "[UPLOADING] - ", "[INFO] - ", "[UNPACK - EROFS] - ", "[UNPACK - EXT4] - "):
+        if pfx in line:
+            state["current_action"] = line.split(pfx, 1)[1].strip()[:80]
+            break
 
+    important = any(kw in line for kw in (
+        "[ERROR]", "[WARN]",
+        "Fixing Delay Power Button",
+        "Patching miui-services.jar",
+        "Remove Region Check",
+        "Add ROM Information",
+        "Updating getMiuiVersionInCard",
+        "Updating getRoXmsVersion",
+        "Updating getXmsVersion",
+        "Updating getSimpleOSVersionCode",
+        "PixelDrain",
+        "Build completed",
+        "Packing super.img",
+    ))
 
-def cmd_finish(status: str, upload_url: str = "") -> None:
-    state = _load_state()
-    final_status = status.upper()
-    state.setdefault("events", []).append({"name": "final_status", "status": final_status})
-    if upload_url:
-        state["upload_url"] = upload_url
-
-    credentials = _collect_credentials()
-    if not credentials:
-        _save_state(state)
-        return
-
-    text = _format_message(state, final_status, upload_url=upload_url)
-    chats = state.setdefault("chats", {})
-
-    for token, chat_id in credentials:
-        chat_info = chats.get(chat_id, {})
-        msg_id = chat_info.get("message_id")
-
-        if msg_id:
-            resp = _edit(token, chat_id, msg_id, text)
-        else:
-            resp = _send(token, chat_id, text)
-
-        if resp.get("ok"):
-            result = resp.get("result") or {}
-            if isinstance(result, dict) and result.get("message_id"):
-                if chat_id not in chats:
-                    chats[chat_id] = {"token": token}
-                chats[chat_id]["message_id"] = int(result["message_id"])
-            print(f"[TELEGRAM] Finished '{final_status}' → chat ...{chat_id[-4:]}")
-        else:
-            print(f"[TELEGRAM] Finish failed chat ...{chat_id[-4:]}: {resp.get('error', 'unknown')}", file=sys.stderr)
-
-    state["status"] = final_status
-    _save_state(state)
+    text = format_message(state, "RUNNING")
+    push_update(state, text, force=important)
+    save_state(state)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+def heartbeat() -> None:
+    """Force an elapsed-time update (ignores rate-limit interval)."""
+    state = load_state()
+    text  = format_message(state, "RUNNING")
+    push_update(state, text, force=True)
+    save_state(state)
+
+
+def finish_build(
+    status: str,
+    upload_url: str = "",
+    final_zip_name: str = "",
+    final_zip_size_mib: float = 0.0,
+    error_text: str = "",
+    failed_stage: str = "",
+) -> None:
+    """Push the final success or failure message."""
+    state  = load_state()
+    final  = status.upper()
+
+    if upload_url:       state["upload_url"]          = upload_url
+    if final_zip_name:   state["final_zip_name"]       = final_zip_name
+    if final_zip_size_mib: state["final_zip_size_mib"] = final_zip_size_mib
+    if error_text:       state["error_text"]           = error_text[:200]
+    if failed_stage:     state["failed_stage"]         = failed_stage
+
+    state["status"] = "done" if final in ("OK", "DONE") else "failed"
+    state.setdefault("events", []).append({"id": "final", "status": final, "label": "Build complete"})
+
+    text = format_message(state, final, upload_url=upload_url)
+    push_update(state, text, force=True)
+    save_state(state)
+    _write_report(state)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    args = sys.argv[1:]
-    if not args:
-        print("Usage: telegram.py <start | update <stage> <status> | finish <OK|FAIL> [url]>")
+    argv = sys.argv[1:]
+    if not argv:
+        print("Usage: telegram.py <start|update|heartbeat|finish> [args...]")
         sys.exit(1)
 
-    cmd = args[0]
+    cmd  = argv[0]
+    rest = argv[1:]
 
     if cmd == "start":
-        cmd_start()
-    elif cmd == "update" and len(args) >= 3:
-        cmd_update(args[1], args[2])
-    elif cmd == "finish" and len(args) >= 2:
-        cmd_finish(args[1], args[2] if len(args) >= 3 else "")
+        soc = rest[0] if rest else os.environ.get("TG_SOC", "")
+        start_build(soc=soc)
+
+    elif cmd == "update" and len(rest) >= 2:
+        update_stage(rest[0], rest[1], action=rest[2] if len(rest) >= 3 else "")
+
+    elif cmd == "heartbeat":
+        heartbeat()
+
+    elif cmd == "finish" and rest:
+        status       = rest[0]
+        url          = ""
+        zip_name     = ""
+        zip_mib      = 0.0
+        error_text   = ""
+        failed_stage = ""
+        i = 1
+        while i < len(rest):
+            flag = rest[i]
+            val  = rest[i + 1] if i + 1 < len(rest) else ""
+            if flag == "--url":           url = val;            i += 2
+            elif flag == "--zip":         zip_name = val;       i += 2
+            elif flag == "--size":
+                try: zip_mib = float(val)
+                except ValueError: pass
+                i += 2
+            elif flag == "--error":       error_text = val;     i += 2
+            elif flag == "--failed-stage": failed_stage = val;  i += 2
+            else:                         i += 1
+        finish_build(status, upload_url=url, final_zip_name=zip_name,
+                     final_zip_size_mib=zip_mib, error_text=error_text,
+                     failed_stage=failed_stage)
+
     else:
-        print(f"[TELEGRAM] Unknown command: {' '.join(args)}", file=sys.stderr)
+        print(f"[TELEGRAM] Unknown command: {cmd}", file=sys.stderr)
         sys.exit(1)
 
 
