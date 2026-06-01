@@ -1,4 +1,4 @@
-name: NothingsVN Xiaomi ROM Build
+name: DeadZone Xiaomi ROM Build By MEZO
 
 on:
   workflow_dispatch:
