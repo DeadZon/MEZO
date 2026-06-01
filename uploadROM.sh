@@ -67,11 +67,15 @@ mv ${os_type}_${device_code}_${base_rom_code}.zip ../
 popd || exit
 hash=$(md5sum out/${os_type}_${device_code}_${base_rom_code}.zip |head -c 5)
 mv out/${os_type}_${device_code}_${base_rom_code}.zip out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_${status}.zip
-repack "Build completed"    
+repack "Build completed"
 repack "Output: "
 repack "$(pwd)/out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_${status}.zip"
 upload "Uploading"
 output_file="out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_${status}.zip"
+
+# Save final ZIP path for downstream steps (PixelDrain upload, Telegram)
+mkdir -p output/reports
+echo "$(pwd)/${output_file}" > output/reports/final_zip_path.txt
 
 if [[ $rom_os == "MIUI" ]];then
     uploaddir="MIUI"
@@ -92,8 +96,5 @@ else
     }
 fi  
 
-upload "Clean Workflow.."
-rm -rf $work_dir/out
-rm -rf $work_dir/build
-
 upload "Build ${os_type}_${polyxver} for ${device_code} successfull!"
+# Workspace cleanup is handled by the workflow after PixelDrain upload.

@@ -6,7 +6,15 @@ on:
       input_url:
         description: 'URL of the ROM to build'
         required: true
-      
+      notify_telegram:
+        description: 'Send Telegram live notifications'
+        type: boolean
+        default: false
+      upload_pixeldrain:
+        description: 'Upload final ZIP to PixelDrain'
+        type: boolean
+        default: false
+
 jobs:
   Initialize:
     runs-on: ubuntu-latest
@@ -31,9 +39,9 @@ jobs:
 
       - name: Set up Time
         run: |
-          echo "Setting Vienam timezone"
+          echo "Setting Vietnam timezone"
           sudo timedatectl set-timezone Asia/Ho_Chi_Minh
-          
+
       - name: Install OpenJDK
         uses: actions/setup-java@v4
         with:
@@ -46,10 +54,23 @@ jobs:
       - name: Install Stuff
         run: |
           sudo bash setup.sh
-        
+
       - name: Giving permission
         run: |
           sudo chmod 777 -R *
+
+      # ── Telegram: build started ────────────────────────────────────────────
+      - name: Telegram - Build Started
+        if: ${{ inputs.notify_telegram }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          sudo -E python3 scripts/telegram.py start
 
       - name: Build ROM...
         env:
@@ -57,20 +78,136 @@ jobs:
         run: |
           sudo bash build.sh "$INPUT_URL"
 
+      # ── Telegram: build done, packing starting ─────────────────────────────
+      - name: Telegram - Build Done
+        if: ${{ inputs.notify_telegram && success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          sudo -E python3 scripts/telegram.py update build_rom OK
+          sudo -E python3 scripts/telegram.py update pack_rom RUN
+
       - name: Pack ROM...
         run: |
           sudo bash packROM.sh
 
+      # ── Telegram: pack done ────────────────────────────────────────────────
+      - name: Telegram - Pack Done
+        if: ${{ inputs.notify_telegram && success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          sudo -E python3 scripts/telegram.py update pack_rom OK
+
       - name: Setup Rclone...
         run: |
           sudo -E bash uploadROM.sh setup "${{ secrets.GH_TOKEN }}" "${{ secrets.GH_REPO }}" "${{ secrets.RCLONE_TOKEN_PATH }}"
-          
+
+      # ── Telegram: OneDrive upload starting ────────────────────────────────
+      - name: Telegram - OneDrive Upload Starting
+        if: ${{ inputs.notify_telegram && success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          sudo -E python3 scripts/telegram.py update upload_onedrive RUN
+
       - name: Upload ROM...
         run: |
           sudo -E bash uploadROM.sh
-      
-      - name: Update Database and Notificaton to Telegram
+
+      # ── PixelDrain upload ─────────────────────────────────────────────────
+      - name: Telegram - PixelDrain Upload Starting
+        if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TG_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          
+          sudo -E python3 scripts/telegram.py update upload_pixeldrain RUN
+
+      - name: PixelDrain Upload
+        if: ${{ inputs.upload_pixeldrain && success() }}
+        env:
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+        run: |
+          ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
+          if [ -z "$ZIP_PATH" ]; then
+            echo "::error::Could not read final ZIP path from output/reports/final_zip_path.txt"
+            exit 1
+          fi
+          echo "[PIXELDRAIN] ZIP path: $ZIP_PATH"
+          sudo -E python3 scripts/pixeldrain_upload.py "$ZIP_PATH"
+
+      - name: Telegram - PixelDrain Upload Done
+        if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          sudo -E python3 scripts/telegram.py update upload_pixeldrain OK
+
+      # ── Telegram: final status ─────────────────────────────────────────────
+      - name: Telegram - Success
+        if: ${{ inputs.notify_telegram && success() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          PIXELDRAIN_URL=""
+          REPORT="output/reports/pixeldrain_upload_report.json"
+          if [ -f "$REPORT" ]; then
+            PIXELDRAIN_URL=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$REPORT'))
+    print(d.get('url', ''))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+          fi
+          sudo -E python3 scripts/telegram.py finish OK "$PIXELDRAIN_URL"
+
+      - name: Telegram - Failed
+        if: ${{ inputs.notify_telegram && failure() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MTK_BOT_TOKEN: ${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}
+          TELEGRAM_MTK_CHAT_ID: ${{ secrets.TELEGRAM_MTK_CHAT_ID }}
+          TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+        run: |
+          sudo -E python3 scripts/telegram.py finish FAIL
+
+      # ── Workspace cleanup ─────────────────────────────────────────────────
+      - name: Cleanup Workspace
+        if: always()
+        run: |
+          sudo rm -rf "${{ github.workspace }}/out" || true
+          sudo rm -rf "${{ github.workspace }}/build" || true
