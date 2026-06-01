@@ -77,24 +77,5 @@ output_file="out/${os_type}_${polyxver}_${device_code}_${base_rom_code}_${hash}_
 mkdir -p output/reports
 echo "$(pwd)/${output_file}" > output/reports/final_zip_path.txt
 
-if [[ $rom_os == "MIUI" ]];then
-    uploaddir="MIUI"
-else
-    uploaddir="HyperOS"
-fi
-
-# 1drive
-if [[ $rom_os == "MIUI" ]]; then
-    rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$ONEDRIVE_REMOTE:NTBuild/${uploaddir}/${polyxver}/${device_code}/" || {
-        upload "Error uploading file to OneDrive: $FILENAME"
-        exit 1
-    }
-else
-    rclone -v --config="$RCLONE_CONFIG_1DRIVE" copy "$output_file" "$ONEDRIVE_REMOTE:NTBuild/${uploaddir}/${polyxver}/${device_code}/" || {
-        upload "Error uploading file to OneDrive: $FILENAME"
-        exit 1
-    }
-fi  
-
-upload "Build ${os_type}_${polyxver} for ${device_code} successfull!"
-# Workspace cleanup is handled by the workflow after PixelDrain upload.
+upload "Package ready: ${output_file}"
+# Upload is handled by the workflow (PixelDrain) after this step.

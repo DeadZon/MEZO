@@ -131,24 +131,17 @@ jobs:
         if: ${{ inputs.notify_telegram && success() }}
         run: sudo -E python3 scripts/telegram.py update pack_rom OK
 
-      # ── Upload ROM to OneDrive ─────────────────────────────────────────────
-      - name: Setup Rclone
-        run: |
-          sudo -E bash uploadROM.sh setup "${{ secrets.GH_TOKEN }}" "${{ secrets.GH_REPO }}" "${{ secrets.RCLONE_TOKEN_PATH }}"
+      # ── Package final ROM ZIP (no OneDrive) ───────────────────────────────
+      - name: Package ROM ZIP
+        run: sudo bash uploadROM.sh
 
-      - name: Telegram - OneDrive Upload Starting
-        if: ${{ inputs.notify_telegram && success() }}
-        run: sudo -E python3 scripts/telegram.py update upload_onedrive RUN
-
-      - name: Upload ROM
-        run: sudo -E bash uploadROM.sh
-
-      # ── PixelDrain upload ─────────────────────────────────────────────────
-      - name: Telegram - PixelDrain Upload Starting
+      # ── PixelDrain upload (primary upload path) ───────────────────────────
+      - name: Telegram - Upload Starting
         if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
         run: sudo -E python3 scripts/telegram.py update upload_pixeldrain RUN
 
       - name: PixelDrain Upload
+        id: pixeldrain_upload
         if: ${{ inputs.upload_pixeldrain && success() }}
         run: |
           ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
@@ -159,7 +152,7 @@ jobs:
           echo "[PIXELDRAIN] Uploading: $ZIP_PATH"
           sudo -E python3 scripts/pixeldrain_upload.py "$ZIP_PATH"
 
-      - name: Telegram - PixelDrain Done
+      - name: Telegram - Upload Done
         if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
         run: sudo -E python3 scripts/telegram.py update upload_pixeldrain OK
 
@@ -173,12 +166,12 @@ jobs:
             PIXELDRAIN_URL=$(python3 -c "import json; d=json.load(open('$REPORT')); print(d.get('url',''))" 2>/dev/null || echo "")
           fi
 
-          ZIP_SIZE=""
           ZIP_NAME=""
+          ZIP_SIZE="0"
           ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
           if [ -f "$ZIP_PATH" ]; then
             ZIP_NAME=$(basename "$ZIP_PATH")
-            ZIP_SIZE=$(python3 -c "import os; print(f'{os.path.getsize(\"$ZIP_PATH\")/1024/1024:.1f}')" 2>/dev/null || echo "")
+            ZIP_SIZE=$(python3 -c "import os; print(f'{os.path.getsize(\"$ZIP_PATH\")/1024/1024:.1f}')" 2>/dev/null || echo "0")
           fi
 
           sudo -E python3 scripts/telegram.py finish OK \
@@ -188,7 +181,13 @@ jobs:
 
       - name: Telegram - Failed
         if: ${{ inputs.notify_telegram && failure() }}
-        run: sudo -E python3 scripts/telegram.py finish FAIL
+        run: |
+          FAILED_STAGE=""
+          if [ "${{ steps.pixeldrain_upload.outcome }}" = "failure" ]; then
+            FAILED_STAGE="upload_pixeldrain"
+          fi
+          sudo -E python3 scripts/telegram.py finish FAIL \
+            ${FAILED_STAGE:+--failed-stage "$FAILED_STAGE"}
 
       # ── Cleanup ───────────────────────────────────────────────────────────
       - name: Cleanup workspace
