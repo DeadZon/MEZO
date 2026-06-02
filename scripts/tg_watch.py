@@ -56,7 +56,7 @@ _MARKER_STAGE: list[tuple[str, str]] = [
     ("Packing super.img", "super"),
     ("super.img",         "super"),
     ("vbmeta",            "vbmeta"),
-    ("[UPLOADING]",       "upload_onedrive"),
+    ("[UPLOADING]",        "zip"),
     ("PixelDrain",        "upload_pixeldrain"),
 ]
 

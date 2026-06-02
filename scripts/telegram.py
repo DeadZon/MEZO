@@ -34,8 +34,8 @@ from pathlib import Path
 STATE_FILE        = Path("output/reports/telegram_status.json")
 REPORT_FILE       = Path("output/reports/telegram_live_report.txt")
 MAX_TEXT          = 4000
-MIN_EDIT_INTERVAL = 8.0   # minimum seconds between edits (rate-limit buffer)
-LOG_BUFFER_MAX    = 8     # how many log lines to keep visible
+MIN_EDIT_INTERVAL = 5.0   # minimum seconds between edits (rate-limit buffer)
+LOG_BUFFER_MAX    = 5     # how many log lines to keep visible in message
 
 # ── Pipeline stage definitions ────────────────────────────────────────────────
 #   (id, icon, display label)
@@ -47,12 +47,23 @@ STAGES: list[tuple[str, str, str]] = [
     ("super",             "💾", "Build Super Image"),
     ("vbmeta",            "🔐", "vbmeta"),
     ("zip",               "🗜",  "Create Final ZIP"),
-    ("upload_onedrive",   "☁️",  "OneDrive Upload"),
     ("upload_pixeldrain", "☁️",  "PixelDrain Upload"),
 ]
 
 _STAGE_ICON  = {s[0]: s[1] for s in STAGES}
 _STAGE_LABEL = {s[0]: s[2] for s in STAGES}
+
+# Progress-bar percentage reached when each stage completes or starts running.
+_STAGE_DONE_PCT: dict[str, int] = {
+    "setup":             10,
+    "unpack":            20,
+    "mods":              50,
+    "rebuild":           60,
+    "super":             70,
+    "vbmeta":            80,
+    "zip":               90,
+    "upload_pixeldrain": 100,
+}
 
 
 # ── Device / GitHub context readers ──────────────────────────────────────────
@@ -219,26 +230,47 @@ def _elapsed_str(started_at: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
+def _calc_progress(events: list[dict]) -> int:
+    """Return 0-100 progress percentage based on stage events."""
+    status_map: dict[str, str] = {}
+    for ev in events:
+        sid = ev.get("id", "")
+        if sid in _STAGE_DONE_PCT:
+            status_map[sid] = ev.get("status", "")
+
+    pct = 0
+    for sid, _, _ in STAGES:
+        st = status_map.get(sid, "")
+        if st in ("OK", "DONE", "RUN"):
+            pct = _STAGE_DONE_PCT.get(sid, pct)
+        if st == "RUN":
+            break   # stop advancing at the currently running stage
+    return pct
+
+
+def _progress_bar(pct: int) -> str:
+    filled = round(pct / 10)
+    bar    = "█" * filled + "░" * (10 - filled)
+    return f"📈 Progress: {bar} {pct}%"
+
+
 def _progress_block(events: list[dict]) -> list[str]:
+    """Return stage timeline lines (✅ / 🟡 / ❌ / ⚪) without OneDrive."""
     status_map: dict[str, str] = {}
     for ev in events:
         sid = ev.get("id", "")
         if sid:
             status_map[sid] = ev.get("status", "")
 
-    running_found = False
     lines: list[str] = []
-    for sid, icon, label in STAGES:
+    for sid, _icon, label in STAGES:
         st = status_map.get(sid, "")
-        if st == "OK":
+        if st in ("OK", "DONE"):
             lines.append(f"✅ {label}")
         elif st == "RUN":
             lines.append(f"🟡 {label}")
-            running_found = True
         elif st in ("FAIL", "ERROR"):
             lines.append(f"❌ {label}")
-        elif running_found:
-            lines.append(f"⚪ {label}")
         else:
             lines.append(f"⚪ {label}")
     return lines
@@ -260,97 +292,96 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
     android   = dev.get("ver") or ""
     rom_os    = dev.get("os") or dev.get("ostype") or "HyperOS"
     os_label  = f"{rom_os} / Android {android}" if android else rom_os
-
     branch    = gh.get("branch") or "—"
     sha       = gh.get("sha") or "—"
-    run_num   = gh.get("run") or "—"
-    actor     = gh.get("actor") or "—"
-    run_url   = gh.get("url") or ""
 
-    elapsed        = _elapsed_str(state.get("started_at", time.time()))
-    stage_id       = state.get("current_stage_id", "")
-    stage_label    = state.get("current_stage_label") or _STAGE_LABEL.get(stage_id, stage_id)
-    stage_icon     = _STAGE_ICON.get(stage_id, "📍")
-    cur_action     = state.get("current_action", "")
-    log_buf        = state.get("log_buffer", [])
-    events         = state.get("events", [])
+    elapsed     = _elapsed_str(state.get("started_at", time.time()))
+    stage_id    = state.get("current_stage_id", "")
+    stage_label = state.get("current_stage_label") or _STAGE_LABEL.get(stage_id, stage_id)
+    stage_icon  = _STAGE_ICON.get(stage_id, "📍")
+    cur_action  = state.get("current_action", "")
+    log_buf     = state.get("log_buffer", [])
+    events      = state.get("events", [])
+    pct         = _calc_progress(events)
+    bar_line    = _progress_bar(pct)
 
     out: list[str] = []
 
-    # Header
+    # ── Header ────────────────────────────────────────────────────────────────
     if is_done:
         out.append("✅ MEZO Build Finished")
     elif is_failed:
         out.append("❌ MEZO Build Failed")
     else:
-        out.append("🚀 MEZO ROM Builder Live")
+        out.append("🚀 MEZO Build Live")
     out.append("━━━━━━━━━━━━━━━━━━━━━━")
     out.append("")
 
-    # Build metadata
+    # ── Build metadata ────────────────────────────────────────────────────────
     out.append(f"📱 Device:  {device}")
     out.append(f"🧩 SoC:     {soc_label}")
     out.append(f"💿 ROM:     {rom_ver}")
     out.append(f"🤖 OS:      {os_label}")
     out.append(f"🌿 Branch:  {branch}")
     out.append(f"🔖 Commit:  {sha}")
-    out.append(f"🔢 Run:     #{run_num}")
-    out.append(f"👤 Actor:   {actor}")
     out.append("")
 
-    # Status / progress
+    # ── Status block ──────────────────────────────────────────────────────────
     if is_done:
-        out.append(f"📊 Status:  ✅ SUCCESS")
+        out.append("📊 Status:  ✅ SUCCESS")
         out.append(f"⏱ Total:   {elapsed}")
+        out.append(bar_line)
     elif is_failed:
-        out.append(f"📊 Status:  ❌ FAILED")
-        out.append(f"⏱ Total:   {elapsed}")
+        out.append("📊 Status:  ❌ FAILED")
+        out.append(f"⏱ Elapsed: {elapsed}")
+        failed = state.get("failed_stage", "")
+        err    = state.get("error_text", "")
+        if failed:
+            out.append(f"📍 Failed Stage: {_STAGE_LABEL.get(failed, failed)}")
+        if err:
+            out.append(f"💥 Cause:  {err[:150]}")
+        out.append(bar_line)
     else:
-        out.append(f"📊 Status:  🟡 RUNNING")
+        out.append("📊 Status:  🟡 RUNNING")
         out.append(f"⏱ Elapsed: {elapsed}")
         out.append(f"📍 Stage:   {stage_icon} {stage_label}")
         if cur_action:
             out.append(f"🔧 Now:     {cur_action[:65]}")
+        out.append(bar_line)
 
-    # Recent log lines (running only)
+    # ── Live log (running only) ───────────────────────────────────────────────
     if log_buf and is_running:
         out.append("")
-        out.append("📝 Recent:")
-        for ln in log_buf[-6:]:
+        out.append("📝 Live Log:")
+        for ln in log_buf[-LOG_BUFFER_MAX:]:
             out.append(f"  {ln[:72]}")
 
-    # Progress timeline
-    out.append("")
-    out.append("Progress:")
-    out.extend(_progress_block(events))
+    # ── Progress timeline (running + done only) ───────────────────────────────
+    if not is_failed:
+        out.append("")
+        out.append("Progress:")
+        out.extend(_progress_block(events))
 
-    # Success details
+    # ── Success details ───────────────────────────────────────────────────────
     if is_done:
         actual_url = upload_url or state.get("upload_url", "")
-        if actual_url:
+        zip_name   = state.get("final_zip_name", "")
+        zip_mib    = state.get("final_zip_size_mib", 0.0)
+        if actual_url or zip_name or zip_mib:
             out.append("")
+        if actual_url:
             out.append(f"☁️ PixelDrain: {actual_url}")
-        zip_name = state.get("final_zip_name", "")
-        zip_mib  = state.get("final_zip_size_mib", 0.0)
         if zip_name:
             out.append(f"📦 ZIP:  {zip_name}")
         if zip_mib:
             out.append(f"📏 Size: {zip_mib:.1f} MiB")
 
-    # Failure details
-    if is_failed:
-        failed = state.get("failed_stage", "")
-        err    = state.get("error_text", "")
-        if failed:
-            out.append("")
-            out.append(f"📍 Failed: {_STAGE_LABEL.get(failed, failed)}")
-        if err:
-            out.append(f"💥 Error:  {err[:150]}")
-
-    # Footer
-    if run_url:
+    # ── Failure: last log lines ───────────────────────────────────────────────
+    if is_failed and log_buf:
         out.append("")
-        out.append(f"🔗 {run_url}")
+        out.append("📝 Last Log:")
+        for ln in log_buf[-LOG_BUFFER_MAX:]:
+            out.append(f"  {ln[:72]}")
 
     return "\n".join(out)
 
