@@ -1,0 +1,22 @@
+{
+  "codename": "aristotle",
+  "display_name": "Xiaomi 13T",
+  "brand": "Xiaomi",
+  "soc_family": "mtk",
+  "slot_mode": "VAB",
+  "dynamic_partitions": true,
+  "required_images": [
+    "super.img",
+    "boot.img",
+    "vbmeta.img"
+  ],
+  "optional_images": [
+    "init_boot.img",
+    "vendor_boot.img",
+    "dtbo.img",
+    "logo.img",
+    "cust.img",
+    "vbmeta_system.img",
+    "vbmeta_vendor.img"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "codename": "zircon",
+  "display_name": "Redmi Note 13 Pro+ 5G",
+  "brand": "Redmi",
+  "soc_family": "mtk",
+  "slot_mode": "VAB",
+  "dynamic_partitions": true,
+  "required_images": [
+    "super.img",
+    "boot.img",
+    "init_boot.img",
+    "vendor_boot.img",
+    "vbmeta.img",
+    "vbmeta_system.img",
+    "vbmeta_vendor.img"
+  ],
+  "optional_images": [
+    "dtbo.img",
+    "logo.img",
+    "cust.img",
+    "apusys.img",
+    "audio_dsp.img",
+    "ccu.img",
+    "lk.img",
+    "md1img.img",
+    "scp.img",
+    "tee.img",
+    "preloader_raw.img"
+  ]
+}

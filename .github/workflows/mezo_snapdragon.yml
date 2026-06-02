@@ -55,7 +55,9 @@ jobs:
         uses: actions/checkout@main
 
       - name: Install dependencies
-        run: sudo bash setup.sh
+        run: |
+          sudo bash setup.sh
+          sudo apt-get install -y unrar p7zip-full 2>/dev/null || true
 
       - name: Set permissions
         run: sudo chmod 777 -R *
@@ -131,9 +133,11 @@ jobs:
         if: ${{ inputs.notify_telegram && success() }}
         run: sudo -E python3 scripts/telegram.py update pack_rom OK
 
-      # ── Package final ROM ZIP (no OneDrive) ───────────────────────────────
+      # ── Package final ROM ZIP (DeadZone template) ────────────────────────
       - name: Package ROM ZIP
-        run: sudo bash uploadROM.sh
+        run: |
+          sudo -E python3 scripts/package_rom.py
+          echo "[PACKAGE] ZIP path: $(cat output/reports/final_zip_path.txt)"
 
       # ── PixelDrain upload (primary upload path) ───────────────────────────
       - name: Telegram - Upload Starting

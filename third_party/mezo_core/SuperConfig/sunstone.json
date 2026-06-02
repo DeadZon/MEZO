@@ -1,0 +1,18 @@
+{
+  "codename": "sunstone",
+  "super_size": 9663676416,
+  "is_ab": true,
+  "partition_group": "qti_dynamic_partitions",
+  "metadata_slots": 3,
+  "partitions": [
+    "odm",
+    "product",
+    "system",
+    "system_ext",
+    "vendor",
+    "vendor_dlkm",
+    "mi_ext"
+  ],
+  "auto_detect": true,
+  "note": "auto_detect=true means ROM metadata/lpmake output will override super_size"
+}

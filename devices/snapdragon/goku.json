@@ -1,0 +1,22 @@
+{
+  "codename": "goku",
+  "display_name": "Xiaomi MIX Fold 4",
+  "brand": "Xiaomi",
+  "soc_family": "snapdragon",
+  "slot_mode": "VAB",
+  "dynamic_partitions": true,
+  "required_images": [
+    "super.img",
+    "boot.img",
+    "vbmeta.img"
+  ],
+  "optional_images": [
+    "init_boot.img",
+    "vendor_boot.img",
+    "dtbo.img",
+    "logo.img",
+    "cust.img",
+    "vbmeta_system.img",
+    "vbmeta_vendor.img"
+  ]
+}
