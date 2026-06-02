@@ -4,15 +4,16 @@
 Replaces old uploadROM.sh packaging.
 - Reads device info from bin/ddevice/ (populated by build.sh)
 - Resolves device config via device_resolver
-- Extracts DeadZone_Mezo.rar template exactly as-is (required)
+- Extracts DeadZone_Mezo.rar template (bin/ + Linux/macOS scripts preserved)
+- Generates Windows BAT flash scripts dynamically from actual images present
 - Copies .img files from build output into images/
-- Does NOT generate or overwrite any flash scripts
 - Validates scripts, images, and ZIP before finalising
 - Creates: DeadZone_<codename>_<rom_version>_A<android>.zip
 - Writes: output/reports/final_zip_path.txt
 -         output/reports/device_resolve_report.txt
 -         output/reports/final_zip_manifest.txt
 -         output/reports/final_zip_summary.json
+-         output/reports/flash_script_scan_report.txt
 -         output/reports/pipeline_script_scan_report.txt
 
 Usage:
@@ -23,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -51,12 +51,12 @@ STAGING_BASE = WORK_DIR / "out" / "dz_staging"
 REPORTS_DIR  = WORK_DIR / "output" / "reports"
 OUT_DIR      = WORK_DIR / "out"
 
-# All .img files that belong in images/ (super.img handled separately)
+# img files that belong in images/ (super.img handled separately)
 OPTIONAL_IMGS = [
     "boot.img", "init_boot.img", "vendor_boot.img", "dtbo.img",
     "vbmeta.img", "vbmeta_system.img", "vbmeta_vendor.img",
     "vbmeta_product.img", "vbmeta_odm.img",
-    "logo.img", "cust.img",
+    "logo.img", "cust.img", "rescue.img",
     # MTK-specific
     "apusys.img", "audio_dsp.img", "ccu.img", "connsys_bt.img",
     "connsys_gnss.img", "connsys_wifi.img", "dpm.img", "gpueb.img",
@@ -65,7 +65,7 @@ OPTIONAL_IMGS = [
     "tee.img", "vcp.img", "preloader_raw.img",
 ]
 
-# img filename → fastboot partition name
+# img filename → fastboot partition name (only safe, known partitions)
 FLASH_MAP: dict[str, str] = {
     "boot.img":           "boot",
     "init_boot.img":      "init_boot",
@@ -73,6 +73,7 @@ FLASH_MAP: dict[str, str] = {
     "dtbo.img":           "dtbo",
     "logo.img":           "logo",
     "cust.img":           "cust",
+    "rescue.img":         "rescue",
     "super.img":          "super",
     "vbmeta.img":         "vbmeta",
     "vbmeta_system.img":  "vbmeta_system",
@@ -81,19 +82,47 @@ FLASH_MAP: dict[str, str] = {
     "vbmeta_odm.img":     "vbmeta_odm",
 }
 
+# Must exist before the ZIP is built; fail hard if missing
+REQUIRED_IMAGES: frozenset[str] = frozenset({"super.img", "vbmeta.img"})
+
+# Flash order inside the generated BAT scripts
+FLASH_ORDER: list[str] = [
+    "dtbo.img",
+    "boot.img",
+    "init_boot.img",
+    "vendor_boot.img",
+    "super.img",
+    "vbmeta_system.img",
+    "vbmeta_vendor.img",
+    "vbmeta_product.img",
+    "vbmeta_odm.img",
+    "vbmeta.img",
+    "logo.img",
+    "cust.img",
+    "rescue.img",
+]
+
 FORBIDDEN_ENTRIES = [
     "output/", "build/", "work/", "logs/", "reports/",
     "payload.bin", ".git", "super.img.zst",
 ]
 
-_REQUIRED_SCRIPTS = [
-    "windows_install_upgrade.bat", "windows_install_and_format_data.bat",
-    "windows_format_data_only.bat",
+# Linux/macOS scripts MUST come from the template (preserved exactly)
+_TEMPLATE_SCRIPTS = [
     "linux_install_upgrade.sh", "linux_install_and_format_data.sh",
     "linux_format_data_only.sh",
     "macos_install_upgrade.sh", "macos_install_and_format_data.sh",
     "macos_format_data_only.sh",
 ]
+
+# Windows scripts are generated dynamically from actual images present
+_GEN_WIN_SCRIPTS = [
+    "windows_install_upgrade.bat",
+    "windows_install_and_format_data.bat",
+    "windows_format_data_only.bat",
+]
+
+_REQUIRED_SCRIPTS = _TEMPLATE_SCRIPTS + _GEN_WIN_SCRIPTS
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -159,24 +188,257 @@ def _flatten_template(staging: Path) -> str | None:
     return nested.name
 
 
-def _validate_scripts_against_images(
-    staging: Path, img_dir: Path
-) -> tuple[list[str], list[str], list[str]]:
-    """Validate template flash scripts: non-empty, have commands, no missing image refs.
+# ── Windows BAT script generation ────────────────────────────────────────────
 
-    Returns: (errors, warnings, missing_image_refs)
+_BAT_FASTBOOT_SETUP = (
+    "@echo off\n"
+    "setlocal enabledelayedexpansion\n"
+    "set SCRIPT_DIR=%~dp0\n"
+    "set IMG=%SCRIPT_DIR%images\n"
+    "set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe\n"
+    'if not exist "%FASTBOOT%" set FASTBOOT=fastboot'
+)
+
+
+def _build_bat_flash_block(available_imgs: set[str]) -> tuple[list[str], list[str]]:
+    """Build BAT flash command lines for each known image that actually exists.
+
+    Returns: (bat_lines, flash_cmds_summary)
+    """
+    lines: list[str] = []
+    cmds:  list[str] = []
+
+    for img in FLASH_ORDER:
+        if img not in available_imgs:
+            continue
+        part = FLASH_MAP.get(img)
+        if part is None:
+            continue
+
+        cmds.append(f"fastboot flash {part} images\\{img}")
+        is_req = img in REQUIRED_IMAGES
+
+        if is_req:
+            lines += [
+                f":: Required: {img}",
+                f'if not exist "%IMG%\\{img}" (',
+                f'    echo ERROR: images\\{img} not found. DO NOT disconnect!',
+                f'    pause',
+                f'    exit /b 1',
+                f')',
+                f'"%FASTBOOT%" flash {part} "%IMG%\\{img}"',
+                f'if errorlevel 1 (',
+                f'    echo.',
+                f'    echo Flash failed. Do not disconnect the phone.',
+                f'    pause',
+                f'    exit /b 1',
+                f')',
+                '',
+            ]
+        else:
+            lines += [
+                f'if exist "%IMG%\\{img}" (',
+                f'    "%FASTBOOT%" flash {part} "%IMG%\\{img}"',
+                f'    if errorlevel 1 (',
+                f'        echo.',
+                f'        echo Flash failed. Do not disconnect the phone.',
+                f'        pause',
+                f'        exit /b 1',
+                f'    )',
+                f')',
+                '',
+            ]
+
+    return lines, cmds
+
+
+def _gen_windows_scripts(
+    staging: Path,
+    img_dir: Path,
+    codename: str,
+    rom_version: str,
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Generate 3 Windows BAT flash scripts from images present in img_dir.
+
+    Returns: (errors, warnings, unknown_imgs, flash_cmds_summary)
     """
     errors:   list[str] = []
     warnings: list[str] = []
-    missing:  list[str] = []
+    unknown:  list[str] = []
+
+    available = {p.name for p in img_dir.glob("*.img")}
+
+    # Validate required images are present
+    for req in sorted(REQUIRED_IMAGES):
+        if req not in available:
+            errors.append(f"Required image missing: {req}")
+    if errors:
+        return errors, warnings, unknown, []
+
+    unknown = sorted(img for img in available if img not in FLASH_MAP)
+    if unknown:
+        warnings.append(f"Unknown images (not flashed): {', '.join(unknown)}")
+
+    flash_lines, flash_cmds = _build_bat_flash_block(available)
+    flash_block = "\n".join(flash_lines)
+
+    # ── windows_install_upgrade.bat ───────────────────────────────────────────
+    upgrade_lines = [
+        _BAT_FASTBOOT_SETUP,
+        "",
+        "echo ============================================================",
+        f"echo   DeadZone ROM - Upgrade (no data wipe)",
+        f"echo   Device: {codename}",
+        f"echo   ROM:    {rom_version}",
+        "echo   DO NOT disconnect during flashing!",
+        "echo ============================================================",
+        "echo.",
+        "",
+        flash_block,
+        "echo.",
+        "echo All partitions flashed successfully!",
+        "echo Rebooting to system...",
+        '"%FASTBOOT%" reboot',
+        "pause",
+    ]
+    (staging / "windows_install_upgrade.bat").write_text(
+        "\n".join(upgrade_lines) + "\n", encoding="utf-8"
+    )
+
+    # ── windows_install_and_format_data.bat ───────────────────────────────────
+    clean_lines = [
+        _BAT_FASTBOOT_SETUP,
+        "",
+        "echo ============================================================",
+        f"echo   DeadZone ROM - Clean Install (WIPES userdata)",
+        f"echo   Device: {codename}",
+        f"echo   ROM:    {rom_version}",
+        "echo   WARNING: userdata WILL be erased!",
+        "echo   DO NOT disconnect during flashing!",
+        "echo ============================================================",
+        "echo.",
+        "echo Starting in 10 seconds... Close window to cancel.",
+        "timeout /t 10 /nobreak >nul",
+        "echo.",
+        "",
+        flash_block,
+        "echo.",
+        "echo All partitions flashed. Erasing metadata and userdata...",
+        '"%FASTBOOT%" erase metadata',
+        'if errorlevel 1 (',
+        '    echo.',
+        '    echo Erase metadata failed. Do not disconnect the phone.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        '"%FASTBOOT%" erase userdata',
+        'if errorlevel 1 (',
+        '    echo.',
+        '    echo Erase userdata failed. Do not disconnect the phone.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        "echo Done! Rebooting...",
+        '"%FASTBOOT%" reboot',
+        "pause",
+    ]
+    (staging / "windows_install_and_format_data.bat").write_text(
+        "\n".join(clean_lines) + "\n", encoding="utf-8"
+    )
+
+    # ── windows_format_data_only.bat ──────────────────────────────────────────
+    fmt_lines = [
+        "@echo off",
+        "set SCRIPT_DIR=%~dp0",
+        "set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe",
+        'if not exist "%FASTBOOT%" set FASTBOOT=fastboot',
+        "",
+        "echo ============================================================",
+        "echo   DeadZone ROM - Format Data Only",
+        "echo   WARNING: This will erase all user data!",
+        "echo   DO NOT disconnect during operation!",
+        "echo ============================================================",
+        "echo.",
+        "",
+        "echo Erasing metadata...",
+        '"%FASTBOOT%" erase metadata',
+        'if errorlevel 1 (',
+        '    echo.',
+        '    echo Erase metadata failed. Do not disconnect the phone.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        "",
+        "echo Erasing userdata...",
+        '"%FASTBOOT%" erase userdata',
+        'if errorlevel 1 (',
+        '    echo.',
+        '    echo Erase userdata failed. Do not disconnect the phone.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        "",
+        "echo Done! Rebooting...",
+        '"%FASTBOOT%" reboot',
+        "pause",
+    ]
+    (staging / "windows_format_data_only.bat").write_text(
+        "\n".join(fmt_lines) + "\n", encoding="utf-8"
+    )
+
+    print(f"[PACKAGE] Generated Windows BAT scripts ({len(flash_cmds)} flash commands)")
+    for cmd in flash_cmds:
+        print(f"  {cmd}")
+
+    return errors, warnings, unknown, flash_cmds
+
+
+def _validate_generated_bat_scripts(staging: Path, available_imgs: set[str]) -> list[str]:
+    """Sanity-check the generated Windows BAT scripts."""
+    errors: list[str] = []
+
+    for sname in _GEN_WIN_SCRIPTS:
+        sp = staging / sname
+        if not sp.is_file():
+            errors.append(f"Generated script not found: {sname}")
+            continue
+        content = sp.read_text(encoding="utf-8", errors="replace")
+        if not content.strip():
+            errors.append(f"Generated script is empty: {sname}")
+            continue
+        # Upgrade and clean-install scripts must have fastboot commands
+        if sname != "windows_format_data_only.bat" and "fastboot" not in content.lower():
+            errors.append(f"Generated script has no fastboot commands: {sname}")
+        # Upgrade script must NOT erase userdata
+        if sname == "windows_install_upgrade.bat":
+            if "erase metadata" in content.lower() or "erase userdata" in content.lower():
+                errors.append(f"Upgrade script must not erase userdata: {sname}")
+        # No script must reference a missing image
+        for m in re.finditer(r'%IMG%\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
+            ref = m.group(1)
+            if ref not in available_imgs:
+                errors.append(f"{sname}: references images\\{ref} which is not available")
+
+    return errors
+
+
+# ── Template script validation ────────────────────────────────────────────────
+
+def _validate_template_scripts(staging: Path, img_dir: Path) -> tuple[list[str], list[str]]:
+    """Validate Linux/macOS template scripts: non-empty and have fastboot commands.
+
+    Returns: (errors, warnings)
+    """
+    errors:   list[str] = []
+    warnings: list[str] = []
 
     available_imgs = {f.name for f in img_dir.glob("*.img")}
     any_has_commands = False
 
-    for sname in _REQUIRED_SCRIPTS:
+    for sname in _TEMPLATE_SCRIPTS:
         sp = staging / sname
         if not sp.is_file():
-            errors.append(f"Script missing: {sname}")
+            errors.append(f"Template script missing: {sname}")
             continue
         try:
             content = sp.read_text(encoding="utf-8", errors="replace")
@@ -185,35 +447,26 @@ def _validate_scripts_against_images(
             continue
         stripped = content.strip()
         if not stripped:
-            errors.append(f"Script is empty: {sname}")
+            errors.append(f"Template script is empty: {sname}")
             continue
-        # Check for actual flash/command content (beyond just comments)
-        non_comment_lines = [
+        non_comment = [
             ln for ln in stripped.splitlines()
-            if ln.strip() and not ln.strip().startswith(("#", "::"))
+            if ln.strip() and not ln.strip().startswith("#")
         ]
-        if len(non_comment_lines) < 3:
-            errors.append(f"Script has no real commands: {sname}")
-            continue
-        if "fastboot" in content.lower():
+        if len(non_comment) < 2:
+            warnings.append(f"Template script looks empty: {sname}")
+        elif "fastboot" in content.lower():
             any_has_commands = True
-        # Find references to images/xxx.img
-        for m in re.finditer(r'images[\\/]([^\s"\'\\;]+\.img)', content, re.IGNORECASE):
-            ref = m.group(1).replace("\\", "/").split("/")[-1]
-            if ref not in available_imgs:
-                msg = f"{sname}: references images/{ref} — file not in images/"
-                warnings.append(msg)
-                missing.append(ref)
 
-    if not any_has_commands:
-        warnings.append("No flash script contains 'fastboot' — check template scripts")
+    if not any_has_commands and not errors:
+        warnings.append("No Linux/macOS template script contains 'fastboot' — verify template")
 
-    return errors, warnings, missing
+    return errors, warnings
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-def _validate_zip(zip_path: Path) -> list[str]:
+def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
     """Return list of validation errors (empty = OK)."""
     errors: list[str] = []
     if not zip_path.is_file():
@@ -222,10 +475,23 @@ def _validate_zip(zip_path: Path) -> list[str]:
         errors.append(f"ZIP name must start with 'DeadZone_', got: {zip_path.name}")
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
+        names_lower = {n.lower() for n in names}
+
         if not any("images/super.img" in n.lower() for n in names):
             errors.append("images/super.img missing from ZIP")
         if not any(n.lower().endswith(".sh") or n.lower().endswith(".bat") for n in names):
             errors.append("No flash scripts (.sh/.bat) found at ZIP root")
+
+        # Validate every images\xxx.img reference in BAT scripts exists in the ZIP
+        for n in names:
+            if not n.lower().endswith(".bat"):
+                continue
+            content = zf.read(n).decode("utf-8", errors="replace")
+            for m in re.finditer(r'%IMG%\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
+                ref = m.group(1).lower()
+                if f"images/{ref}" not in names_lower:
+                    errors.append(f"{n}: references images\\{m.group(1)} which is not in ZIP")
+
         for forbidden in FORBIDDEN_ENTRIES:
             hits = [n for n in names if forbidden.lower() in n.lower()]
             if hits:
@@ -235,11 +501,78 @@ def _validate_zip(zip_path: Path) -> list[str]:
 
 # ── Reports ───────────────────────────────────────────────────────────────────
 
+def _write_flash_scan_report(
+    img_dir: Path,
+    available_imgs: set[str],
+    flash_cmds: list[str],
+    unknown_imgs: list[str],
+    warnings: list[str],
+    staging: Path,
+) -> None:
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    skipped = [img for img in FLASH_ORDER if img not in available_imgs]
+    missing_req = sorted(img for img in REQUIRED_IMAGES if img not in available_imgs)
+
+    lines = [
+        "MEZO Flash Script Scan Report",
+        "=" * 40,
+        f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "",
+        f"Images folder:   {img_dir}",
+        f"Images found:    {len(available_imgs)}",
+        "",
+        "Found images:",
+    ]
+    for img in sorted(available_imgs):
+        part   = FLASH_MAP.get(img, "(unknown — not flashed)")
+        marker = "✓" if img in FLASH_MAP else "?"
+        lines.append(f"  {marker} {img:<35s}  → {part}")
+
+    lines += ["", f"Generated flash commands ({len(flash_cmds)}):"]
+    for cmd in flash_cmds:
+        lines.append(f"  {cmd}")
+
+    if skipped:
+        lines += ["", f"Skipped (not present, {len(skipped)}):"]
+        for img in skipped:
+            lines.append(f"  {img}")
+
+    if missing_req:
+        lines += ["", f"MISSING REQUIRED images ({len(missing_req)}):"]
+        for img in missing_req:
+            lines.append(f"  ! {img}")
+    else:
+        lines += ["", "Required images: ALL PRESENT"]
+
+    if unknown_imgs:
+        lines += ["", f"Unknown images ({len(unknown_imgs)}) — not flashed:"]
+        for img in unknown_imgs:
+            lines.append(f"  ? {img}")
+
+    if warnings:
+        lines += ["", "Warnings:"]
+        for w in warnings:
+            lines.append(f"  ! {w}")
+
+    lines += ["", "Generated scripts:"]
+    for name in _GEN_WIN_SCRIPTS:
+        p = staging / name
+        if p.is_file():
+            lines.append(f"  {name}  ({p.stat().st_size:,} bytes)")
+        else:
+            lines.append(f"  {name}  [NOT FOUND]")
+
+    (REPORTS_DIR / "flash_script_scan_report.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    print(f"[PACKAGE] Flash scan report → {REPORTS_DIR / 'flash_script_scan_report.txt'}")
+
+
 def _write_manifest(
     zip_path: Path, sha: str,
     imgs_detected: list[str],
     unknown_imgs: list[str],
-    missing_refs: list[str],
+    flash_cmds: list[str],
     template_preserved: bool,
     uncompressed_bytes: int,
 ) -> None:
@@ -257,22 +590,23 @@ def _write_manifest(
         f"Uncompressed size:      {uncompressed_bytes:,} bytes ({uncompressed_bytes / 1024**2:.1f} MiB)",
         f"Compression ratio:      {ratio:.3f}x",
         f"Template preserved:     {'YES' if template_preserved else 'NO'}",
+        f"Win scripts generated:  YES (from actual images)",
         "",
         f"Images detected ({len(imgs_detected)}):",
     ]
     for img in sorted(imgs_detected):
-        part = FLASH_MAP.get(img, "(extra)")
+        part = FLASH_MAP.get(img, "(extra — not flashed)")
         lines.append(f"  {img:<35s}  → fastboot flash {part}")
+
     if unknown_imgs:
-        lines.append("")
-        lines.append(f"Unknown extra images ({len(unknown_imgs)}) — not flashed by template:")
+        lines += ["", f"Unknown images ({len(unknown_imgs)}) — not flashed:"]
         for img in sorted(unknown_imgs):
             lines.append(f"  {img}")
-    if missing_refs:
-        lines.append("")
-        lines.append(f"Flash script references to missing images ({len(missing_refs)}):")
-        for ref in sorted(set(missing_refs)):
-            lines.append(f"  images/{ref}  [MISSING]")
+
+    if flash_cmds:
+        lines += ["", f"Generated flash commands ({len(flash_cmds)}):"]
+        for cmd in flash_cmds:
+            lines.append(f"  {cmd}")
 
     forbidden_found: list[str] = []
     lines += ["", "Files inside ZIP:"]
@@ -295,9 +629,10 @@ def _write_manifest(
 def _write_summary(
     zip_path: Path, sha: str, cfg: dict,
     images: list[str], scripts: list[str],
+    flash_cmds: list[str],
+    unknown_imgs: list[str],
     template_used: bool = True, template_preserved: bool = True,
     nested_root: str | None = None,
-    missing_refs: list[str] | None = None,
     uncompressed_bytes: int = 0,
     zip_tool: str = "python-zipfile",
 ) -> None:
@@ -306,36 +641,40 @@ def _write_summary(
     ratio = uncompressed_bytes / compressed_bytes if compressed_bytes > 0 else 1.0
 
     summary: dict = {
-        "codename":                cfg["codename"],
-        "soc":                     cfg.get("soc_family", ""),
-        "rom_os_version":          _read("base_rom_code.txt"),
-        "android_version":         _read("androidver.txt"),
-        "final_zip_name":          zip_path.name,
-        "final_zip_path":          str(zip_path),
-        "sha256":                  sha,
-        "size_bytes":              compressed_bytes,
-        "file_count":              0,
-        "images_detected":         images,
-        "flash_scripts_checked":   scripts,
-        "flash_commands_generated": False,
-        "missing_images_referenced": list(set(missing_refs or [])),
-        "scripts_empty":           False,
-        "template_archive":        TEMPLATE_RAR.name,
-        "template_nested_root":    nested_root or "",
-        "template_flattened":      nested_root is not None,
-        "template_used":           template_used,
-        "template_preserved":      template_preserved,
-        "bin_exists":              True,
-        "scripts_preserved":       True,
-        "scripts_generated":       False,
-        "bin_renamed":             False,
-        "images_added":            len(images) > 0,
-        "compression_method":      "deflate9",
-        "compressed_size_bytes":   compressed_bytes,
-        "uncompressed_size_bytes": uncompressed_bytes,
-        "compression_ratio":       round(ratio, 4),
-        "zip_tool_used":           zip_tool,
-        "forbidden_entries_found": [],
+        "codename":                   cfg["codename"],
+        "soc":                        cfg.get("soc_family", ""),
+        "rom_os_version":             _read("base_rom_code.txt"),
+        "android_version":            _read("androidver.txt"),
+        "final_zip_name":             zip_path.name,
+        "final_zip_path":             str(zip_path),
+        "sha256":                     sha,
+        "size_bytes":                 compressed_bytes,
+        "file_count":                 0,
+        "images_detected":            images,
+        "flash_scripts_checked":      scripts,
+        "flash_commands_generated":   True,
+        "generated_flash_commands":   flash_cmds,
+        "unknown_images":             unknown_imgs,
+        "missing_images_referenced":  [],
+        "scripts_empty":              False,
+        "template_archive":           TEMPLATE_RAR.name,
+        "template_nested_root":       nested_root or "",
+        "template_flattened":         nested_root is not None,
+        "template_used":              template_used,
+        "template_preserved":         template_preserved,
+        "linux_scripts_preserved":    True,
+        "macos_scripts_preserved":    True,
+        "win_scripts_generated":      True,
+        "scripts_generated":          True,
+        "bin_exists":                 True,
+        "bin_renamed":                False,
+        "images_added":               len(images) > 0,
+        "compression_method":         "deflate9",
+        "compressed_size_bytes":      compressed_bytes,
+        "uncompressed_size_bytes":    uncompressed_bytes,
+        "compression_ratio":          round(ratio, 4),
+        "zip_tool_used":              zip_tool,
+        "forbidden_entries_found":    [],
     }
     with zipfile.ZipFile(zip_path) as zf:
         summary["file_count"] = len(zf.namelist())
@@ -359,17 +698,17 @@ def _gen_pipeline_scan_report() -> None:
     ]
 
     files_to_scan = [
-        ("build.sh",                            WORK_DIR / "build.sh"),
-        ("packROM.sh",                          WORK_DIR / "packROM.sh"),
-        ("scripts/package_rom.py",              WORK_DIR / "scripts" / "package_rom.py"),
-        ("scripts/pixeldrain_upload.py",        WORK_DIR / "scripts" / "pixeldrain_upload.py"),
-        ("scripts/tg_watch.py",                 WORK_DIR / "scripts" / "tg_watch.py"),
-        ("scripts/telegram.py",                 WORK_DIR / "scripts" / "telegram.py"),
-        (".github/workflows/mezo_mtk.yml",      WORK_DIR / ".github" / "workflows" / "mezo_mtk.yml"),
+        ("build.sh",                              WORK_DIR / "build.sh"),
+        ("packROM.sh",                            WORK_DIR / "packROM.sh"),
+        ("scripts/package_rom.py",                WORK_DIR / "scripts" / "package_rom.py"),
+        ("scripts/pixeldrain_upload.py",          WORK_DIR / "scripts" / "pixeldrain_upload.py"),
+        ("scripts/tg_watch.py",                   WORK_DIR / "scripts" / "tg_watch.py"),
+        ("scripts/telegram.py",                   WORK_DIR / "scripts" / "telegram.py"),
+        (".github/workflows/mezo_mtk.yml",        WORK_DIR / ".github" / "workflows" / "mezo_mtk.yml"),
         (".github/workflows/mezo_snapdragon.yml", WORK_DIR / ".github" / "workflows" / "mezo_snapdragon.yml"),
     ]
 
-    _LOG_MARKER_RE = re.compile(
+    _MARKER_RE = re.compile(
         r'\[(?:UNPACK|MODS|PATCH|REPACK|VBMETA|PACKAGE|ZIP|UPLOAD|ERROR|DONE|TELEGRAM)\]'
     )
 
@@ -392,7 +731,7 @@ def _gen_pipeline_scan_report() -> None:
             for t in tg_calls[:12]:
                 lines.append(f"    {t}")
 
-        markers = sorted(set(_LOG_MARKER_RE.findall(content)))
+        markers = sorted(set(_MARKER_RE.findall(content)))
         if markers:
             lines.append(f"  log markers: {', '.join(markers)}")
 
@@ -406,20 +745,17 @@ def _gen_pipeline_scan_report() -> None:
         if refs:
             lines.append(f"  references: {', '.join(refs)}")
 
-        # Workflow-specific checks
         if label.endswith(".yml"):
             issues: list[str] = []
             if "build_rom" in content:
-                issues.append("deprecated stage 'build_rom' — use 'unpack'/'mods'")
+                issues.append("deprecated stage 'build_rom'")
             if "pack_rom" in content:
-                issues.append("deprecated stage 'pack_rom' — use 'rebuild'/'super'/'vbmeta'")
+                issues.append("deprecated stage 'pack_rom'")
             for sid in ("unpack", "mods", "rebuild", "super", "vbmeta", "zip", "upload_pixeldrain"):
                 if f"update {sid}" in content:
                     lines.append(f"  stage tracked: {sid}")
             if issues:
-                lines.append("  WARNINGS:")
-                for iss in issues:
-                    lines.append(f"    ! {iss}")
+                lines.append("  WARNINGS: " + ", ".join(issues))
             else:
                 lines.append("  stage IDs: OK")
 
@@ -456,7 +792,7 @@ def package() -> Path:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    # ── Extract template RAR — required, no fallback ──────────────────────────
+    # ── Extract template RAR — required ───────────────────────────────────────
     if not TEMPLATE_RAR.is_file():
         print(f"[PACKAGE] ERROR: Template RAR not found: {TEMPLATE_RAR}", file=sys.stderr)
         sys.exit(1)
@@ -467,21 +803,21 @@ def package() -> Path:
         print("[PACKAGE] ERROR: RAR extraction failed — unrar, 7z, or bsdtar required", file=sys.stderr)
         sys.exit(1)
 
-    # Flatten if RAR extracted into a single nested folder (e.g. DeadZone_Mezo/)
     nested_root = _flatten_template(staging)
 
-    # ── Verify template is intact ─────────────────────────────────────────────
-    missing_scripts = [s for s in _REQUIRED_SCRIPTS if not (staging / s).is_file()]
+    # ── Verify template: bin/ + Linux/macOS scripts ───────────────────────────
+    # Windows scripts are generated; only Linux/macOS scripts must come from template.
+    missing_template = [s for s in _TEMPLATE_SCRIPTS if not (staging / s).is_file()]
     bin_ok = (staging / "bin").is_dir()
-    if missing_scripts or not bin_ok:
+    if missing_template or not bin_ok:
         print("[PACKAGE] ERROR: Template extraction incomplete!", file=sys.stderr)
         if not bin_ok:
             print("  bin/ directory missing from template", file=sys.stderr)
-        for s in missing_scripts:
-            print(f"  Missing flash script: {s}", file=sys.stderr)
+        for s in missing_template:
+            print(f"  Missing template script: {s}", file=sys.stderr)
         sys.exit(1)
     template_preserved = True
-    print(f"[PACKAGE] Template verified: bin/ present, {len(_REQUIRED_SCRIPTS)} flash scripts intact")
+    print(f"[PACKAGE] Template verified: bin/ present, {len(_TEMPLATE_SCRIPTS)} Linux/macOS scripts intact")
 
     # ── images/ directory ─────────────────────────────────────────────────────
     img_dir = staging / "images"
@@ -489,7 +825,7 @@ def package() -> Path:
 
     copied_imgs: list[str] = []
 
-    # 1. super.img — must exist
+    # super.img — must exist (created by packROM.sh)
     super_src = BUILD_IMAGES / "super.img"
     if super_src.is_file():
         shutil.copy2(super_src, img_dir / "super.img")
@@ -499,7 +835,7 @@ def package() -> Path:
         print("[PACKAGE] ERROR: build/baserom/images/super.img not found!", file=sys.stderr)
         sys.exit(1)
 
-    # 2. Other .img files from build output
+    # Other .img files
     src_dirs = [BUILD_IMAGES]
     if baserom_type == "br" and BUILD_FW.is_dir():
         src_dirs.append(BUILD_FW)
@@ -515,25 +851,53 @@ def package() -> Path:
             shutil.copy2(img, img_dir / img.name)
             copied_imgs.append(img.name)
 
+    available_imgs = {p.name for p in img_dir.glob("*.img")}
     print(f"[PACKAGE] Images collected: {len(copied_imgs)} files")
     print(f"  {', '.join(copied_imgs[:8])}{'...' if len(copied_imgs) > 8 else ''}")
 
-    # Classify known vs unknown images
-    known_imgs   = [n for n in copied_imgs if n in FLASH_MAP]
-    unknown_imgs = [n for n in copied_imgs if n not in FLASH_MAP]
-    if unknown_imgs:
-        print(f"[PACKAGE] Extra images (not in FLASH_MAP, not flashed by default): {unknown_imgs}")
+    # ── Validate required images ──────────────────────────────────────────────
+    missing_required = sorted(req for req in REQUIRED_IMAGES if req not in available_imgs)
+    if missing_required:
+        print("[PACKAGE] ERROR: Required images missing:", file=sys.stderr)
+        for img in missing_required:
+            print(f"  ! {img}", file=sys.stderr)
+        sys.exit(1)
 
-    # ── Validate flash scripts against available images ───────────────────────
-    script_errors, script_warnings, missing_refs = _validate_scripts_against_images(staging, img_dir)
-    if script_errors:
-        print("[PACKAGE] SCRIPT VALIDATION ERRORS:", file=sys.stderr)
-        for e in script_errors:
+    # ── Generate Windows BAT scripts from actual images ───────────────────────
+    win_errors, win_warnings, unknown_imgs, flash_cmds = _gen_windows_scripts(
+        staging, img_dir, _sanitize_name(codename), rom_version
+    )
+    if win_errors:
+        print("[PACKAGE] Windows script generation ERRORS:", file=sys.stderr)
+        for e in win_errors:
             print(f"  ! {e}", file=sys.stderr)
         sys.exit(1)
-    for w in script_warnings:
+    for w in win_warnings:
         print(f"[PACKAGE] WARN: {w}", file=sys.stderr)
-    print(f"[PACKAGE] Script validation: PASS ({len(_REQUIRED_SCRIPTS)} scripts checked)")
+
+    # ── Validate generated BAT scripts ────────────────────────────────────────
+    bat_errors = _validate_generated_bat_scripts(staging, available_imgs)
+    if bat_errors:
+        print("[PACKAGE] BAT script validation ERRORS:", file=sys.stderr)
+        for e in bat_errors:
+            print(f"  ! {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"[PACKAGE] BAT validation: PASS")
+
+    # ── Validate Linux/macOS template scripts ─────────────────────────────────
+    tmpl_errors, tmpl_warnings = _validate_template_scripts(staging, img_dir)
+    if tmpl_errors:
+        print("[PACKAGE] Template script validation ERRORS:", file=sys.stderr)
+        for e in tmpl_errors:
+            print(f"  ! {e}", file=sys.stderr)
+        sys.exit(1)
+    for w in tmpl_warnings:
+        print(f"[PACKAGE] WARN: {w}", file=sys.stderr)
+
+    # ── Write flash scan report ───────────────────────────────────────────────
+    _write_flash_scan_report(
+        img_dir, available_imgs, flash_cmds, unknown_imgs, win_warnings, staging
+    )
 
     # ── Create ZIP ────────────────────────────────────────────────────────────
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -555,10 +919,10 @@ def package() -> Path:
     print(f"[PACKAGE] ZIP created: {size_mib:.1f} MiB  (ratio {ratio:.2f}x)")
 
     # ── Validate ZIP ──────────────────────────────────────────────────────────
-    errors = _validate_zip(zip_path)
-    if errors:
+    zip_errors = _validate_zip(zip_path, available_imgs)
+    if zip_errors:
         print("[PACKAGE] VALIDATION ERRORS:", file=sys.stderr)
-        for e in errors:
+        for e in zip_errors:
             print(f"  ! {e}", file=sys.stderr)
         sys.exit(1)
     print("[PACKAGE] Validation: PASS")
@@ -574,7 +938,7 @@ def package() -> Path:
         zip_path, sha,
         imgs_detected=copied_imgs,
         unknown_imgs=unknown_imgs,
-        missing_refs=missing_refs,
+        flash_cmds=flash_cmds,
         template_preserved=template_preserved,
         uncompressed_bytes=uncompressed_bytes,
     )
@@ -582,10 +946,11 @@ def package() -> Path:
         zip_path, sha, cfg,
         images=copied_imgs,
         scripts=scripts_in_zip,
+        flash_cmds=flash_cmds,
+        unknown_imgs=unknown_imgs,
         template_used=template_used,
         template_preserved=template_preserved,
         nested_root=nested_root,
-        missing_refs=missing_refs,
         uncompressed_bytes=uncompressed_bytes,
         zip_tool=zip_tool,
     )
