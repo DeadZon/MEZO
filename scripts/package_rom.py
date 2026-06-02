@@ -273,8 +273,6 @@ def _flatten_template(staging: Path) -> str | None:
 
 # ── Windows BAT script generation ────────────────────────────────────────────
 
-_BAT_FAIL = "echo Flash failed. Do not disconnect the phone. & exit /B 1"
-
 # MEZO warning block — shown at the top of both install scripts
 _MEZO_WARNING = """\
 echo.
@@ -297,13 +295,40 @@ set fastboot=bin\\windows\\fastboot.exe
 if not exist "%fastboot%" set fastboot=fastboot"""
 
 
+def _codename_check_block(codename: str) -> str:
+    """Return the BAT codename check section. Only this may call exit /B 1."""
+    return (
+        ":: ── Codename check — only this can stop flashing ──────────────────────\n"
+        "set DEVICE_CODE=unknown\n"
+        f'for /f "tokens=2" %%a in (\'%fastboot% getvar product 2^>^&1 ^| findstr /i /b "product:"\') do set DEVICE_CODE=%%a\n'
+        f'if /i not "%DEVICE_CODE%"=="{codename}" (\n'
+        f'    echo.\n'
+        f'    echo. ============================================================\n'
+        f'    echo.  ERROR: WRONG DEVICE DETECTED\n'
+        f'    echo.  This ROM is built for : {codename}\n'
+        f'    echo.  Your device reports   : %DEVICE_CODE%\n'
+        f'    echo.  DO NOT flash this ROM on the wrong device!\n'
+        f'    echo.  Exiting now.\n'
+        f'    echo. ============================================================\n'
+        f'    pause\n'
+        f'    exit /B 1\n'
+        f')\n'
+        f'echo. Device codename verified: %DEVICE_CODE%\n'
+        "echo.\n"
+    )
+
+
 def _build_bat_flash_block(available_imgs: set[str],
                            flash_map: dict[str, str],
                            flash_order: list[str]) -> tuple[list[str], list[str]]:
-    """Build %fastboot% flash command lines for each known image that exists.
+    """Build %fastboot% flash lines for each known image that exists at packaging time.
 
-    Uses SoC-specific flash_map (MTK: _ab; Snapdragon: base names).
-    No _a/_b split for MTK; no preloader_a/b/1/2 for MTK.
+    Rules:
+    - Generator only emits commands for images that exist (no runtime image checks).
+    - Flash errors are NOT fatal: print a warning, set FLASH_FAILED=1, continue.
+    - No exit /B 1 inside this block.
+    - No if not exist guards.
+    - No if exist wrappers.
 
     Returns: (bat_lines, flash_cmds_summary)
     """
@@ -317,24 +342,14 @@ def _build_bat_flash_block(available_imgs: set[str],
         if part is None:
             continue
 
-        is_req = img in REQUIRED_IMAGES
-
-        if is_req:
-            lines += [
-                f":: Required: {img} -> {part}",
-                f'if not exist "images\\{img}" ( echo ERROR: images\\{img} not found. & exit /B 1 )',
-                f'%fastboot% flash {part} "images\\{img}"',
-                f'if errorlevel 1 ( {_BAT_FAIL} )',
-                '',
-            ]
-        else:
-            lines += [
-                f'if exist "images\\{img}" (',
-                f'    %fastboot% flash {part} "images\\{img}"',
-                f'    if errorlevel 1 ( {_BAT_FAIL} )',
-                f')',
-                '',
-            ]
+        lines += [
+            f'%fastboot% flash {part} "images\\{img}"',
+            f'if errorlevel 1 (',
+            f'    echo [WARN] {part} flash failed, continuing...',
+            f'    set FLASH_FAILED=1',
+            f')',
+            '',
+        ]
         cmds.append(f'%fastboot% flash {part} images\\{img}')
 
     return lines, cmds
@@ -348,6 +363,12 @@ def _gen_windows_scripts(
     soc_family: str = "mtk",
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     """Generate 3 standalone Windows BAT flash scripts for the given SoC.
+
+    Behavior:
+    - Codename check runs first; mismatch exits before any flash.
+    - Flash phase: all commands run; errors warn only (set FLASH_FAILED=1).
+    - No image preflight checks; no exit /B 1 inside flash block.
+    - Generator only emits commands for images present at packaging time.
 
     Returns: (errors, warnings, unknown_imgs, flash_cmds_summary)
     """
@@ -382,56 +403,57 @@ def _gen_windows_scripts(
     flash_lines, flash_cmds = _build_bat_flash_block(available, flash_map, flash_order)
     flash_block = "\n".join(flash_lines)
 
-    # Common header section used by upgrade and clean-install
-    def _header(title: str) -> str:
+    codename_check = _codename_check_block(codename)
+
+    def _install_header(title: str) -> str:
         return (
-            f"{_BAT_HEADER}\n"
-            f"\n"
-            f"title {title}\n"
-            f"\n"
-            f"{_MEZO_WARNING}\n"
-            f"\n"
-            f"echo.\n"
+            f"{_BAT_HEADER}\n\n"
+            f"title {title}\n\n"
+            f"{_MEZO_WARNING}\n\n"
             f"echo. Make sure your device is in Fastboot mode, then press any key.\n"
             f"pause >nul\n"
-            f"echo.\n"
+            f"echo.\n\n"
+            f"{codename_check}\n"
         )
 
-    # ── windows_install_upgrade.bat ───────────────────────────────────────────
+    # ── windows_install_upgrade.bat (flash only, no wipe) ─────────────────────
     upgrade = (
-        _header(f"DeadZone ROM - Upgrade (no data wipe) | {codename} | {rom_version}")
-        + f"\n{FLASH_BLOCK_START}\n"
+        _install_header(f"DeadZone ROM - Upgrade (no data wipe) | {codename} | {rom_version}")
+        + f"{FLASH_BLOCK_START}\n"
         + flash_block
-        + f"{FLASH_BLOCK_END}\n"
-        + "\n"
+        + f"{FLASH_BLOCK_END}\n\n"
         + "echo.\n"
-        + "echo. All partitions flashed successfully. Rebooting...\n"
+        + "if defined FLASH_FAILED (\n"
+        + "    echo. [WARN] Some flash commands reported errors. Check messages above.\n"
+        + ")\n"
+        + "echo. Flash phase complete. Rebooting...\n"
         + "%fastboot% reboot\n"
         + "pause\n"
         + "exit /B 0\n"
     )
     (staging / "windows_install_upgrade.bat").write_text(upgrade, encoding="utf-8")
 
-    # ── windows_install_and_format_data.bat ───────────────────────────────────
+    # ── windows_install_and_format_data.bat (flash then wipe) ─────────────────
     clean = (
-        _header(f"DeadZone ROM - Clean Install (WIPES userdata) | {codename} | {rom_version}")
-        + "\n"
+        _install_header(f"DeadZone ROM - Clean Install (WIPES userdata) | {codename} | {rom_version}")
         + "echo.\n"
         + "echo. =======================================================\n"
         + "echo.  WARNING: This will ERASE ALL YOUR USER DATA!\n"
-        + "echo.  All images will be flashed first, then metadata and\n"
-        + "echo.  userdata will be erased. Press any key to continue,\n"
+        + "echo.  All images will be flashed, then metadata and\n"
+        + "echo.  userdata will be erased. Press any key to continue\n"
         + "echo.  or close this window to cancel.\n"
         + "echo. =======================================================\n"
         + "echo.\n"
         + "pause >nul\n"
-        + "echo.\n"
-        + f"\n{FLASH_BLOCK_START}\n"
+        + "echo.\n\n"
+        + f"{FLASH_BLOCK_START}\n"
         + flash_block
-        + f"{FLASH_BLOCK_END}\n"
-        + "\n"
+        + f"{FLASH_BLOCK_END}\n\n"
         + "echo.\n"
-        + "echo. All partitions flashed. Erasing metadata...\n"
+        + "if defined FLASH_FAILED (\n"
+        + "    echo. [WARN] Some flash commands reported errors. Check messages above.\n"
+        + ")\n"
+        + "echo. Flash phase complete. Erasing metadata...\n"
         + "%fastboot% erase metadata\n"
         + "if errorlevel 1 ( echo Erase metadata failed. Do not disconnect the phone. & exit /B 1 )\n"
         + "echo. Erasing userdata...\n"
@@ -445,12 +467,10 @@ def _gen_windows_scripts(
     )
     (staging / "windows_install_and_format_data.bat").write_text(clean, encoding="utf-8")
 
-    # ── windows_format_data_only.bat ──────────────────────────────────────────
+    # ── windows_format_data_only.bat (erase only, no flash, no codename check) ─
     fmt = (
-        f"{_BAT_HEADER}\n"
-        "\n"
-        f"title DeadZone ROM - Format Data Only\n"
-        "\n"
+        f"{_BAT_HEADER}\n\n"
+        "title DeadZone ROM - Format Data Only\n\n"
         "echo.\n"
         "echo. =======================================================\n"
         "echo.  DeadZone ROM - Format Data Only\n"
@@ -459,11 +479,9 @@ def _gen_windows_scripts(
         "echo.  Press any key to continue or close window to cancel.\n"
         "echo. =======================================================\n"
         "echo.\n"
-        "pause >nul\n"
-        "\n"
+        "pause >nul\n\n"
         "echo. Make sure your device is in Fastboot mode, then press any key.\n"
-        "pause >nul\n"
-        "\n"
+        "pause >nul\n\n"
         "echo. Erasing metadata...\n"
         "%fastboot% erase metadata\n"
         "if errorlevel 1 ( echo Erase metadata failed. Do not disconnect the phone. & exit /B 1 )\n"
@@ -491,13 +509,14 @@ def _validate_generated_bat_scripts(
     soc_family: str = "mtk",
     flash_map: dict[str, str] | None = None,
 ) -> list[str]:
-    """Sanity-check the generated Windows BAT scripts."""
+    """Validate generated Windows BAT scripts against the required behavior."""
     errors: list[str] = []
-    fmap = flash_map or (MTK_FLASH_MAP if soc_family.lower() == "mtk" else SD_FLASH_MAP)
+    fmap   = flash_map or (MTK_FLASH_MAP if soc_family.lower() == "mtk" else SD_FLASH_MAP)
     is_mtk = soc_family.lower() == "mtk"
 
-    # MTK-specific forbidden patterns
     MTK_FORBIDDEN = ("preloader_a", "preloader_b", "preloader1", "preloader2")
+    UNSAFE_CMDS   = ("fastboot -w", "--disable-verity", "--disable-verification",
+                     "erase frp", "set_active")
 
     for sname in _GEN_WIN_SCRIPTS:
         sp = staging / sname
@@ -509,17 +528,31 @@ def _validate_generated_bat_scripts(
             errors.append(f"Generated script is empty: {sname}")
             continue
 
-        # Flash/erase scripts must use %fastboot%
+        # All scripts must use %fastboot%
+        if "%fastboot%" not in content:
+            errors.append(f"{sname}: missing %fastboot% variable")
+
+        # Flash scripts must have flash commands and a codename check
         if sname != "windows_format_data_only.bat":
-            if "%fastboot%" not in content:
-                errors.append(f"{sname}: missing %fastboot% variable")
             if "flash" not in content.lower():
                 errors.append(f"{sname}: no flash commands found")
+            if "getvar product" not in content.lower():
+                errors.append(f"{sname}: codename check (getvar product) missing")
 
         # Upgrade script must NOT erase userdata or metadata
         if sname == "windows_install_upgrade.bat":
             if "erase metadata" in content.lower() or "erase userdata" in content.lower():
                 errors.append(f"{sname}: upgrade script must not erase userdata or metadata")
+
+        # Validate that no exit /B 1 appears inside the flash block
+        start_idx = content.find(FLASH_BLOCK_START)
+        end_idx   = content.find(FLASH_BLOCK_END)
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            flash_section = content[start_idx:end_idx]
+            if "exit /b 1" in flash_section.lower():
+                errors.append(f"{sname}: exit /B 1 found inside flash block — flash phase must not stop on errors")
+            if "if not exist" in flash_section.lower():
+                errors.append(f"{sname}: image preflight check (if not exist) found in flash block — must be removed")
 
         # Validate every images\xxx.img reference is available
         for m in re.finditer(r'images\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
@@ -527,28 +560,37 @@ def _validate_generated_bat_scripts(
             if ref not in available_imgs:
                 errors.append(f"{sname}: references images\\{ref} — not in available images")
 
-        # MTK-specific: no invented _a/_b split or preloader_1/2/a/b patterns
+        # Unsafe commands must not appear
+        for unsafe in UNSAFE_CMDS:
+            if unsafe.lower() in content.lower():
+                errors.append(f"{sname}: forbidden command '{unsafe}' must not be present")
+
+        # MTK-specific: no _a/_b split, no preloader_1/2/a/b, correct _ab names
         if is_mtk:
             for forbidden in MTK_FORBIDDEN:
                 if forbidden in content.lower():
-                    errors.append(
-                        f"{sname}: MTK script must not contain '{forbidden}' — "
-                        f"use preloader_raw_ab instead"
-                    )
-            # Check that slot images use _ab (not _a or _b as separate flashes)
+                    errors.append(f"{sname}: MTK forbidden pattern '{forbidden}' — use preloader_raw_ab")
             for m in re.finditer(
                 r'%fastboot%\s+flash\s+(\S+)\s+"images\\([^"]+\.img)"',
                 content, re.IGNORECASE
             ):
                 part, img = m.group(1), m.group(2)
                 expected  = fmap.get(img)
-                if expected is None:
-                    continue
-                if part != expected:
+                if expected and part != expected:
                     errors.append(
-                        f"{sname}: {img} flashed as '{part}' — "
-                        f"expected '{expected}' for MTK"
+                        f"{sname}: {img} flashed as '{part}' — expected '{expected}' for MTK"
                     )
+
+        # Snapdragon-specific: no _ab suffix
+        if not is_mtk:
+            for m in re.finditer(
+                r'%fastboot%\s+flash\s+(\S+_ab)\s+"images\\([^"]+\.img)"',
+                content, re.IGNORECASE
+            ):
+                part, img = m.group(1), m.group(2)
+                errors.append(
+                    f"{sname}: Snapdragon script must not use '_ab' partition '{part}' for {img}"
+                )
 
     return errors
 
@@ -652,9 +694,12 @@ def _write_flash_scan_report(
     lines = [
         "MEZO Flash Script Scan Report",
         "=" * 40,
-        f"Generated:       {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
-        f"SoC detected:    {soc_family.upper()}",
-        f"Template style:  {style_label}",
+        f"Generated:               {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        f"SoC detected:            {soc_family.upper()}",
+        f"Template style:          {style_label}",
+        f"Codename check:          ENABLED (stops on mismatch before flashing)",
+        f"Image preflight:         DISABLED (no if-not-exist blocking)",
+        f"Flash error behavior:    warn-and-continue (FLASH_FAILED=1, no exit)",
         "",
         f"Images folder:   {img_dir}",
         f"Images found:    {len(available_imgs)}",
