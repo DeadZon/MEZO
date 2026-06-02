@@ -104,6 +104,33 @@ def _extract_rar(rar: Path, dest: Path) -> bool:
     return False
 
 
+def _flatten_template(staging: Path) -> str | None:
+    """If the RAR extracted into a single top-level folder, lift its contents to staging root.
+
+    Returns the nested folder name if flattening occurred, else None.
+    """
+    top_entries = list(staging.iterdir())
+    if len(top_entries) != 1 or not top_entries[0].is_dir():
+        return None  # already flat or multiple entries
+
+    nested = top_entries[0]
+    # Only flatten when the nested dir looks like the template root
+    if not (nested / "bin").is_dir():
+        return None
+
+    print(f"[PACKAGE] Detected nested template root: {nested.name}/ — flattening into staging")
+    for item in list(nested.iterdir()):
+        dest = staging / item.name
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        shutil.move(str(item), str(dest))
+    nested.rmdir()
+    return nested.name
+
+
 # ── Validation ────────────────────────────────────────────────────────────────
 
 def _validate_zip(zip_path: Path) -> list[str]:
@@ -157,24 +184,30 @@ def _write_manifest(zip_path: Path, sha: str) -> None:
 
 
 def _write_summary(zip_path: Path, sha: str, cfg: dict, images: list[str], scripts: list[str],
-                   template_used: bool = True, template_preserved: bool = True) -> None:
+                   template_used: bool = True, template_preserved: bool = True,
+                   nested_root: str | None = None) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     summary = {
-        "codename":              cfg["codename"],
-        "rom_os_version":        _read("base_rom_code.txt"),
-        "android_version":       _read("androidver.txt"),
-        "final_zip_name":        zip_path.name,
-        "final_zip_path":        str(zip_path),
-        "size_bytes":            zip_path.stat().st_size,
-        "sha256":                sha,
-        "file_count":            0,
-        "images_included":       images,
-        "scripts_included":      scripts,
-        "template_used":         template_used,
-        "template_preserved":    template_preserved,
-        "scripts_generated":     False,
-        "bin_renamed":           False,
-        "images_added":          len(images) > 0,
+        "codename":                cfg["codename"],
+        "rom_os_version":          _read("base_rom_code.txt"),
+        "android_version":         _read("androidver.txt"),
+        "final_zip_name":          zip_path.name,
+        "final_zip_path":          str(zip_path),
+        "size_bytes":              zip_path.stat().st_size,
+        "sha256":                  sha,
+        "file_count":              0,
+        "images_included":         images,
+        "scripts_included":        scripts,
+        "template_archive":        TEMPLATE_RAR.name,
+        "template_nested_root":    nested_root or "",
+        "template_flattened":      nested_root is not None,
+        "template_used":           template_used,
+        "template_preserved":      template_preserved,
+        "bin_exists":              True,
+        "scripts_preserved":       True,
+        "scripts_generated":       False,
+        "bin_renamed":             False,
+        "images_added":            len(images) > 0,
         "forbidden_entries_found": [],
     }
     with zipfile.ZipFile(zip_path) as zf:
@@ -228,6 +261,9 @@ def package() -> Path:
     if not template_used:
         print("[PACKAGE] ERROR: RAR extraction failed — unrar, 7z, or bsdtar required", file=sys.stderr)
         sys.exit(1)
+
+    # Flatten if RAR extracted into a single nested folder (e.g. DeadZone_Mezo/)
+    nested_root = _flatten_template(staging)
 
     # Verify template is intact: bin/ and all flash scripts must be present
     _REQUIRED_SCRIPTS = [
@@ -316,7 +352,8 @@ def package() -> Path:
                       if n.endswith((".sh", ".bat")) and "/" not in n]
     _write_manifest(zip_path, sha)
     _write_summary(zip_path, sha, cfg, copied_imgs, scripts_in_zip,
-                   template_used=template_used, template_preserved=template_preserved)
+                   template_used=template_used, template_preserved=template_preserved,
+                   nested_root=nested_root)
 
     # ── Save path for downstream steps ───────────────────────────────────────
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
