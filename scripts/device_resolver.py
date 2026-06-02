@@ -105,7 +105,8 @@ def resolve(codename: str) -> dict:
 
     # Super size: prefer SuperConfig, fall back to ddevice/superSize.txt
     raw_size     = sc.get("super_size") or _read_file(DDEVICE_DIR / "superSize.txt")
-    default_size = 9663676416   # common Snapdragon default
+    # MTK default: 9126805504 (8.5 GiB); Snapdragon default: 9663676416 (9 GiB)
+    default_size = 9126805504 if soc_family == "mtk" else 9663676416
     super_size   = _sanitize_super_size(raw_size, default_size)
 
     partition_group = sc.get("partition_group", "qti_dynamic_partitions")

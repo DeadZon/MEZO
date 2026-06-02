@@ -4,9 +4,9 @@
 Replaces old uploadROM.sh packaging.
 - Reads device info from bin/ddevice/ (populated by build.sh)
 - Resolves device config via device_resolver
-- Extracts DeadZone_Mezo.rar template (if present) or builds minimal structure
+- Extracts DeadZone_Mezo.rar template exactly as-is (required)
 - Copies .img files from build output into images/
-- Generates safe fastboot flash scripts
+- Does NOT generate or overwrite any flash scripts
 - Creates: DeadZone_<codename>_<rom_version>_A<android>.zip
 - Writes: output/reports/final_zip_path.txt
 -         output/reports/device_resolve_report.txt
@@ -14,7 +14,7 @@ Replaces old uploadROM.sh packaging.
 -         output/reports/final_zip_summary.json
 
 Usage:
-  package_rom.py [--no-template] [--staging-dir <dir>]
+  package_rom.py [--staging-dir <dir>]
 """
 from __future__ import annotations
 
@@ -104,202 +104,6 @@ def _extract_rar(rar: Path, dest: Path) -> bool:
     return False
 
 
-# ── Flash script generation ───────────────────────────────────────────────────
-
-_LINUX_UPGRADE = """\
-#!/usr/bin/env bash
-# DeadZone ROM Flasher — Upgrade (no data wipe)
-# Auto-generated — do not edit manually.
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IMG="$SCRIPT_DIR/images"
-
-die() {{ echo ""; echo "══════════════════════════════════════════════"; echo "  FLASH FAILED: $1"; echo "  Do NOT disconnect your device!"; echo "  Phone remains in fastboot — fix the issue first."; echo "══════════════════════════════════════════════"; exit 1; }}
-
-echo "═══════════════════════════════════════════"
-echo "  DeadZone ROM Flasher — Upgrade"
-echo "  Device: {codename}  ROM: {rom_version}"
-echo "  DO NOT disconnect during flashing!"
-echo "═══════════════════════════════════════════"
-
-# Required: super.img
-[ -f "$IMG/super.img" ] || die "images/super.img not found"
-fastboot flash super "$IMG/super.img" || die "super.img"
-
-# Optional images — flash if present
-for img in {optional_list}; do
-    [ -f "$IMG/$img" ] && {{ fastboot flash "${{img%.img}}" "$IMG/$img" || die "$img"; }}
-done
-
-echo ""
-echo "All partitions flashed successfully!"
-echo "Rebooting to system..."
-fastboot reboot
-"""
-
-_LINUX_CLEAN = """\
-#!/usr/bin/env bash
-# DeadZone ROM Flasher — Clean Install (WIPES userdata)
-# Auto-generated — do not edit manually.
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IMG="$SCRIPT_DIR/images"
-
-die() {{ echo ""; echo "══════════════════════════════════════════════"; echo "  FLASH FAILED: $1"; echo "  Do NOT disconnect your device!"; echo "  Phone remains in fastboot."; echo "══════════════════════════════════════════════"; exit 1; }}
-
-echo "═══════════════════════════════════════════"
-echo "  DeadZone ROM Flasher — Clean Install"
-echo "  Device: {codename}  ROM: {rom_version}"
-echo "  WARNING: userdata WILL be wiped!"
-echo "  DO NOT disconnect during flashing!"
-echo "═══════════════════════════════════════════"
-echo ""
-echo "Starting in 5 seconds... Ctrl-C to cancel."
-sleep 5
-
-[ -f "$IMG/super.img" ] || die "images/super.img not found"
-fastboot flash super "$IMG/super.img" || die "super.img"
-
-for img in {optional_list}; do
-    [ -f "$IMG/$img" ] && {{ fastboot flash "${{img%.img}}" "$IMG/$img" || die "$img"; }}
-done
-
-echo ""
-echo "All partitions flashed — wiping userdata..."
-fastboot erase metadata 2>/dev/null || true
-fastboot erase userdata || die "erase userdata"
-echo ""
-echo "Done! Rebooting..."
-fastboot reboot
-"""
-
-_LINUX_WIPE = """\
-#!/usr/bin/env bash
-# DeadZone ROM Flasher — Format Data Only (no ROM flash)
-set -euo pipefail
-die() {{ echo "FAILED: $1 — do NOT disconnect!"; exit 1; }}
-echo "Erasing metadata and userdata..."
-fastboot erase metadata 2>/dev/null || true
-fastboot erase userdata || die "erase userdata"
-echo "Done! Rebooting..."
-fastboot reboot
-"""
-
-_WIN_UPGRADE = """\
-@echo off
-setlocal enabledelayedexpansion
-:: DeadZone ROM Flasher - Upgrade (no data wipe)
-:: Auto-generated
-set SCRIPT_DIR=%~dp0
-set IMG=%SCRIPT_DIR%images
-set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe
-if not exist "%FASTBOOT%" set FASTBOOT=fastboot
-
-echo ============================================================
-echo   DeadZone ROM Flasher - Upgrade
-echo   Device: {codename}  ROM: {rom_version}
-echo   DO NOT disconnect during flashing!
-echo ============================================================
-
-if not exist "%IMG%\\super.img" (
-    echo ERROR: images\\super.img not found & pause & exit /b 1
-)
-"%FASTBOOT%" flash super "%IMG%\\super.img"
-if errorlevel 1 ( echo FAILED: super.img - DO NOT disconnect! & pause & exit /b 1 )
-
-{win_optional}
-
-echo.
-echo All partitions flashed successfully!
-echo Rebooting to system...
-"%FASTBOOT%" reboot
-pause
-"""
-
-_WIN_CLEAN = """\
-@echo off
-setlocal enabledelayedexpansion
-:: DeadZone ROM Flasher - Clean Install (WIPES userdata)
-set SCRIPT_DIR=%~dp0
-set IMG=%SCRIPT_DIR%images
-set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe
-if not exist "%FASTBOOT%" set FASTBOOT=fastboot
-
-echo ============================================================
-echo   DeadZone ROM Flasher - Clean Install
-echo   Device: {codename}  ROM: {rom_version}
-echo   WARNING: userdata WILL be wiped!
-echo   DO NOT disconnect during flashing!
-echo ============================================================
-echo Starting in 10 seconds... Close window to cancel.
-timeout /t 10
-
-if not exist "%IMG%\\super.img" (
-    echo ERROR: images\\super.img not found & pause & exit /b 1
-)
-"%FASTBOOT%" flash super "%IMG%\\super.img"
-if errorlevel 1 ( echo FAILED: super.img - DO NOT disconnect! & pause & exit /b 1 )
-
-{win_optional}
-
-echo.
-echo All partitions flashed - wiping userdata...
-"%FASTBOOT%" erase metadata 2>nul
-"%FASTBOOT%" erase userdata
-if errorlevel 1 ( echo FAILED: erase userdata - DO NOT disconnect! & pause & exit /b 1 )
-echo Done! Rebooting...
-"%FASTBOOT%" reboot
-pause
-"""
-
-_WIN_WIPE = """\
-@echo off
-set SCRIPT_DIR=%~dp0
-set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe
-if not exist "%FASTBOOT%" set FASTBOOT=fastboot
-echo Erasing metadata and userdata...
-"%FASTBOOT%" erase metadata 2>nul
-"%FASTBOOT%" erase userdata
-if errorlevel 1 ( echo FAILED: erase userdata - DO NOT disconnect! & pause & exit /b 1 )
-echo Done! Rebooting...
-"%FASTBOOT%" reboot
-pause
-"""
-
-
-def _gen_scripts(staging: Path, codename: str, rom_version: str, avail_imgs: list[str]) -> None:
-    """Write all platform flash scripts into staging/."""
-    opt = [i for i in OPTIONAL_IMGS if i != "super.img"]
-    opt_list = " ".join(opt)
-
-    win_opt_lines = "\n".join(
-        f'if exist "%IMG%\\{img}" ( "%FASTBOOT%" flash {img[:-4]} "%IMG%\\{img}"\n'
-        f'  if errorlevel 1 ( echo FAILED: {img} - DO NOT disconnect! & pause & exit /b 1 ) )'
-        for img in opt
-    )
-
-    subs = dict(codename=codename, rom_version=rom_version,
-                optional_list=opt_list, win_optional=win_opt_lines)
-
-    pairs = [
-        ("linux_install_upgrade.sh",          _LINUX_UPGRADE.format(**subs)),
-        ("linux_install_and_format_data.sh",  _LINUX_CLEAN.format(**subs)),
-        ("linux_format_data_only.sh",         _LINUX_WIPE),
-        ("macos_install_upgrade.sh",          _LINUX_UPGRADE.format(**subs)),
-        ("macos_install_and_format_data.sh",  _LINUX_CLEAN.format(**subs)),
-        ("macos_format_data_only.sh",         _LINUX_WIPE),
-        ("windows_install_upgrade.bat",        _WIN_UPGRADE.format(**subs)),
-        ("windows_install_and_format_data.bat",_WIN_CLEAN.format(**subs)),
-        ("windows_format_data_only.bat",       _WIN_WIPE),
-    ]
-    for name, content in pairs:
-        dest = staging / name
-        dest.write_text(content, encoding="utf-8")
-        if name.endswith(".sh"):
-            dest.chmod(0o755)
-    print(f"[PACKAGE] Flash scripts written ({len(pairs)} files)")
-
-
 # ── Validation ────────────────────────────────────────────────────────────────
 
 def _validate_zip(zip_path: Path) -> list[str]:
@@ -352,19 +156,25 @@ def _write_manifest(zip_path: Path, sha: str) -> None:
     (REPORTS_DIR / "final_zip_manifest.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_summary(zip_path: Path, sha: str, cfg: dict, images: list[str], scripts: list[str]) -> None:
+def _write_summary(zip_path: Path, sha: str, cfg: dict, images: list[str], scripts: list[str],
+                   template_used: bool = True, template_preserved: bool = True) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     summary = {
-        "codename":          cfg["codename"],
-        "rom_os_version":    _read("base_rom_code.txt"),
-        "android_version":   _read("androidver.txt"),
-        "final_zip_name":    zip_path.name,
-        "final_zip_path":    str(zip_path),
-        "size_bytes":        zip_path.stat().st_size,
-        "sha256":            sha,
-        "file_count":        0,
-        "images_included":   images,
-        "scripts_included":  scripts,
+        "codename":              cfg["codename"],
+        "rom_os_version":        _read("base_rom_code.txt"),
+        "android_version":       _read("androidver.txt"),
+        "final_zip_name":        zip_path.name,
+        "final_zip_path":        str(zip_path),
+        "size_bytes":            zip_path.stat().st_size,
+        "sha256":                sha,
+        "file_count":            0,
+        "images_included":       images,
+        "scripts_included":      scripts,
+        "template_used":         template_used,
+        "template_preserved":    template_preserved,
+        "scripts_generated":     False,
+        "bin_renamed":           False,
+        "images_added":          len(images) > 0,
         "forbidden_entries_found": [],
     }
     with zipfile.ZipFile(zip_path) as zf:
@@ -408,20 +218,37 @@ def package() -> Path:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    # Try template RAR first
-    template_used = False
-    if TEMPLATE_RAR.is_file():
-        print(f"[PACKAGE] Extracting template: {TEMPLATE_RAR}")
-        template_used = _extract_rar(TEMPLATE_RAR, staging)
-        if not template_used:
-            print("[PACKAGE] WARNING: RAR extraction failed — building minimal package", file=sys.stderr)
+    # Extract template RAR — required, no fallback
+    if not TEMPLATE_RAR.is_file():
+        print(f"[PACKAGE] ERROR: Template RAR not found: {TEMPLATE_RAR}", file=sys.stderr)
+        sys.exit(1)
 
-    # If no template or extraction failed: create minimal structure
+    print(f"[PACKAGE] Extracting template: {TEMPLATE_RAR}")
+    template_used = _extract_rar(TEMPLATE_RAR, staging)
     if not template_used:
-        print("[PACKAGE] Building minimal package structure")
-        (staging / "bin" / "windows").mkdir(parents=True)
-        (staging / "bin" / "linux").mkdir(parents=True)
-        (staging / "bin" / "macos").mkdir(parents=True)
+        print("[PACKAGE] ERROR: RAR extraction failed — unrar, 7z, or bsdtar required", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify template is intact: bin/ and all flash scripts must be present
+    _REQUIRED_SCRIPTS = [
+        "windows_install_upgrade.bat", "windows_install_and_format_data.bat",
+        "windows_format_data_only.bat",
+        "linux_install_upgrade.sh", "linux_install_and_format_data.sh",
+        "linux_format_data_only.sh",
+        "macos_install_upgrade.sh", "macos_install_and_format_data.sh",
+        "macos_format_data_only.sh",
+    ]
+    missing_scripts = [s for s in _REQUIRED_SCRIPTS if not (staging / s).is_file()]
+    bin_ok = (staging / "bin").is_dir()
+    if missing_scripts or not bin_ok:
+        print("[PACKAGE] ERROR: Template extraction incomplete!", file=sys.stderr)
+        if not bin_ok:
+            print("  bin/ directory missing from template", file=sys.stderr)
+        for s in missing_scripts:
+            print(f"  Missing flash script: {s}", file=sys.stderr)
+        sys.exit(1)
+    template_preserved = True
+    print(f"[PACKAGE] Template verified: bin/ present, {len(_REQUIRED_SCRIPTS)} flash scripts intact")
 
     # ── images/ directory ─────────────────────────────────────────────────────
     img_dir = staging / "images"
@@ -460,9 +287,6 @@ def package() -> Path:
     print(f"[PACKAGE] Images collected: {len(copied_imgs)} files")
     print(f"  {', '.join(copied_imgs[:8])}{'...' if len(copied_imgs) > 8 else ''}")
 
-    # ── Flash scripts ─────────────────────────────────────────────────────────
-    _gen_scripts(staging, _sanitize_name(codename), rom_version, copied_imgs)
-
     # ── Create ZIP ────────────────────────────────────────────────────────────
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = OUT_DIR / zip_name
@@ -491,7 +315,8 @@ def package() -> Path:
     scripts_in_zip = [n for n in zipfile.ZipFile(zip_path).namelist()
                       if n.endswith((".sh", ".bat")) and "/" not in n]
     _write_manifest(zip_path, sha)
-    _write_summary(zip_path, sha, cfg, copied_imgs, scripts_in_zip)
+    _write_summary(zip_path, sha, cfg, copied_imgs, scripts_in_zip,
+                   template_used=template_used, template_preserved=template_preserved)
 
     # ── Save path for downstream steps ───────────────────────────────────────
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
