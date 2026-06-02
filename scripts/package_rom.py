@@ -65,65 +65,72 @@ OPTIONAL_IMGS = [
     "tee.img", "vcp.img", "preloader_raw.img",
 ]
 
-# img filename → fastboot partition name (VAB/MTK _ab style; super is non-slot)
+# img filename → base fastboot partition name (no slot suffix).
+# Slot images flash as both _a and _b for AB devices (see _build_bat_flash_block).
+# super is non-slot (flashes once as 'super').
+# cust flashes as 'cust' (non-slot, silent).
+# preloader_raw flashes to 4 targets (see PRELOADER_IMGS).
 FLASH_MAP: dict[str, str] = {
     # Boot / kernel slot images
-    "boot.img":             "boot_ab",
-    "init_boot.img":        "init_boot_ab",
-    "vendor_boot.img":      "vendor_boot_ab",
-    "dtbo.img":             "dtbo_ab",
+    "boot.img":             "boot",
+    "init_boot.img":        "init_boot",
+    "vendor_boot.img":      "vendor_boot",
+    "dtbo.img":             "dtbo",
     # vbmeta slot images
-    "vbmeta.img":           "vbmeta_ab",
-    "vbmeta_system.img":    "vbmeta_system_ab",
-    "vbmeta_vendor.img":    "vbmeta_vendor_ab",
-    "vbmeta_product.img":   "vbmeta_product_ab",
-    "vbmeta_odm.img":       "vbmeta_odm_ab",
-    # super (logical partition, non-slot)
+    "vbmeta.img":           "vbmeta",
+    "vbmeta_system.img":    "vbmeta_system",
+    "vbmeta_vendor.img":    "vbmeta_vendor",
+    "vbmeta_product.img":   "vbmeta_product",
+    "vbmeta_odm.img":       "vbmeta_odm",
+    # super — non-slot (logical partition)
     "super.img":            "super",
-    # Display / misc slot images
-    "logo.img":             "logo_ab",
-    "cust.img":             "cust_ab",
-    "rescue.img":           "rescue_ab",
+    # Display / misc
+    "logo.img":             "logo",
+    "cust.img":             "cust",
+    "rescue.img":           "rescue",
     # MTK firmware slot images
-    "lk.img":               "lk_ab",
-    "md1img.img":           "md1img_ab",
-    "spmfw.img":            "spmfw_ab",
-    "scp.img":              "scp_ab",
-    "sspm.img":             "sspm_ab",
-    "tee.img":              "tee_ab",
-    "gz.img":               "gz_ab",
-    "dpm.img":              "dpm_ab",
-    "ccu.img":              "ccu_ab",
-    "apusys.img":           "apusys_ab",
-    "audio_dsp.img":        "audio_dsp_ab",
-    "connsys_bt.img":       "connsys_bt_ab",
-    "connsys_gnss.img":     "connsys_gnss_ab",
-    "connsys_wifi.img":     "connsys_wifi_ab",
-    "gpueb.img":            "gpueb_ab",
-    "mcf_ota.img":          "mcf_ota_ab",
-    "mcupm.img":            "mcupm_ab",
-    "mvpu_algo.img":        "mvpu_algo_ab",
-    "pi_img.img":           "pi_img_ab",
-    "preloader_raw.img":    "preloader_raw_ab",
-    "vcp.img":              "vcp_ab",
+    "lk.img":               "lk",
+    "md1img.img":           "md1img",
+    "spmfw.img":            "spmfw",
+    "scp.img":              "scp",
+    "sspm.img":             "sspm",
+    "tee.img":              "tee",
+    "gz.img":               "gz",
+    "dpm.img":              "dpm",
+    "ccu.img":              "ccu",
+    "apusys.img":           "apusys",
+    "audio_dsp.img":        "audio_dsp",
+    "connsys_bt.img":       "connsys_bt",
+    "connsys_gnss.img":     "connsys_gnss",
+    "connsys_wifi.img":     "connsys_wifi",
+    "gpueb.img":            "gpueb",
+    "mcf_ota.img":          "mcf_ota",
+    "mcupm.img":            "mcupm",
+    "mvpu_algo.img":        "mvpu_algo",
+    "pi_img.img":           "pi_img",
+    "preloader_raw.img":    "preloader",   # handled specially via PRELOADER_IMGS
+    "vcp.img":              "vcp",
 }
+
+# Images that flash as a single partition (not _a / _b slot pairs).
+# Matches the template's special-case logic.
+NON_SLOT_IMGS: frozenset[str] = frozenset({"super.img", "cust.img"})
+
+# Images that flash to 4 preloader targets (from template logic).
+PRELOADER_IMGS: frozenset[str] = frozenset({"preloader_raw.img"})
 
 # Must exist before the ZIP is built; fail hard if missing
 REQUIRED_IMAGES: frozenset[str] = frozenset({"super.img", "vbmeta.img"})
 
-# Flash order inside the generated BAT scripts.
-# Mirrors Xiaomi/MTK reference scripts: bootloader/firmware first,
-# vbmeta partitions next, super last.
+# Flash order matching script2flash template logic:
+# preloader → bootloader → boot images → MTK firmware → misc → vbmeta → super
 FLASH_ORDER: list[str] = [
-    # Bootloader / preloader
-    "preloader_raw.img",
+    "preloader_raw.img",   # 4 targets via PRELOADER_IMGS
     "lk.img",
-    # Boot / kernel slot images
     "boot.img",
     "init_boot.img",
     "dtbo.img",
     "vendor_boot.img",
-    # MTK firmware slot images
     "md1img.img",
     "spmfw.img",
     "scp.img",
@@ -143,19 +150,21 @@ FLASH_ORDER: list[str] = [
     "mvpu_algo.img",
     "pi_img.img",
     "vcp.img",
-    # Display / misc
     "logo.img",
     "cust.img",
     "rescue.img",
-    # vbmeta (slot images, before super)
     "vbmeta_system.img",
     "vbmeta_vendor.img",
     "vbmeta_product.img",
     "vbmeta_odm.img",
     "vbmeta.img",
-    # super last (logical / non-slot)
     "super.img",
 ]
+
+# Path to the script2flash Windows template
+SCRIPT2FLASH_TEMPLATE = Path("bin/script2flash/Windows_FastbootInstall.bat")
+FLASH_BLOCK_START     = ":: BEGIN MEZO GENERATED IMAGE FLASH COMMANDS"
+FLASH_BLOCK_END       = ":: END MEZO GENERATED IMAGE FLASH COMMANDS"
 
 FORBIDDEN_ENTRIES = [
     "output/", "build/", "work/", "logs/", "reports/",
@@ -243,18 +252,18 @@ def _flatten_template(staging: Path) -> str | None:
     return nested.name
 
 
-# ── Windows BAT script generation ────────────────────────────────────────────
+# ── Windows BAT script generation (template-based) ───────────────────────────
 
-_BAT_FASTBOOT_SETUP = (
-    "@echo off\n"
-    "setlocal enabledelayedexpansion\n"
-    "set fastboot=bin\\windows\\fastboot.exe\n"
-    'if not exist "%fastboot%" set fastboot=fastboot'
-)
+_BAT_FAIL = "echo Flash failed. Do not disconnect the phone. & pause & exit /b 1"
 
 
 def _build_bat_flash_block(available_imgs: set[str]) -> tuple[list[str], list[str]]:
-    """Build BAT flash command lines for each known image that actually exists.
+    """Build flash command lines in script2flash template style.
+
+    Uses !fastboot! (delayed expansion) and the template's AB logic:
+      - PRELOADER_IMGS  → 4 fixed targets (preloader_a/b/1/2)
+      - NON_SLOT_IMGS   → single partition (super, cust)
+      - everything else → _a + _b for AB devices, base name for A-only
 
     Returns: (bat_lines, flash_cmds_summary)
     """
@@ -268,41 +277,173 @@ def _build_bat_flash_block(available_imgs: set[str]) -> tuple[list[str], list[st
         if part is None:
             continue
 
-        cmds.append(f"%fastboot% flash {part} images\\{img}")
         is_req = img in REQUIRED_IMAGES
+        is_pre = img in PRELOADER_IMGS
+        is_non = img in NON_SLOT_IMGS
 
-        if is_req:
-            lines += [
-                f":: Required: {img}",
-                f'if not exist "images\\{img}" (',
-                f'    echo ERROR: images\\{img} not found. DO NOT disconnect!',
-                f'    pause',
-                f'    exit /b 1',
-                f')',
-                f'%fastboot% flash {part} images\\{img}',
-                f'if errorlevel 1 (',
-                f'    echo.',
-                f'    echo Flash failed. Do not disconnect the phone.',
-                f'    pause',
-                f'    exit /b 1',
-                f')',
-                '',
-            ]
-        else:
+        req_guard = (
+            f'if not exist "images\\{img}" ( echo ERROR: images\\{img} not found. & pause & exit /b 1 )'
+        )
+
+        if is_pre:
+            # preloader_raw: 4 targets (mirrors template logic)
             lines += [
                 f'if exist "images\\{img}" (',
-                f'    %fastboot% flash {part} images\\{img}',
-                f'    if errorlevel 1 (',
-                f'        echo.',
-                f'        echo Flash failed. Do not disconnect the phone.',
-                f'        pause',
-                f'        exit /b 1',
-                f'    )',
+                f'    !fastboot! flash preloader_a "images\\{img}"',
+                f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                f'    !fastboot! flash preloader_b "images\\{img}"',
+                f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                f'    !fastboot! flash preloader1 "images\\{img}"',
+                f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                f'    !fastboot! flash preloader2 "images\\{img}"',
+                f'    if errorlevel 1 ( {_BAT_FAIL} )',
                 f')',
                 '',
             ]
+            cmds.append(f'!fastboot! flash preloader_a/b/1/2 images\\{img}')
+
+        elif is_non:
+            # Non-slot: single flash
+            if is_req:
+                lines += [
+                    f':: Required: {img}',
+                    req_guard,
+                    f'!fastboot! flash {part} "images\\{img}"',
+                    f'if errorlevel 1 ( {_BAT_FAIL} )',
+                    '',
+                ]
+            else:
+                lines += [
+                    f'if exist "images\\{img}" (',
+                    f'    !fastboot! flash {part} "images\\{img}"',
+                    f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                    f')',
+                    '',
+                ]
+            cmds.append(f'!fastboot! flash {part} images\\{img}')
+
+        else:
+            # Slot image: _a + _b for AB; base name for A-only (mirrors template for loop)
+            if is_req:
+                lines += [
+                    f':: Required: {img}',
+                    req_guard,
+                    f'if "!fqlx!" == "AB" (',
+                    f'    !fastboot! flash {part}_a "images\\{img}"',
+                    f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                    f'    !fastboot! flash {part}_b "images\\{img}"',
+                    f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                    f') else (',
+                    f'    !fastboot! flash {part} "images\\{img}"',
+                    f'    if errorlevel 1 ( {_BAT_FAIL} )',
+                    f')',
+                    '',
+                ]
+            else:
+                lines += [
+                    f'if exist "images\\{img}" (',
+                    f'    if "!fqlx!" == "AB" (',
+                    f'        !fastboot! flash {part}_a "images\\{img}"',
+                    f'        if errorlevel 1 ( {_BAT_FAIL} )',
+                    f'        !fastboot! flash {part}_b "images\\{img}"',
+                    f'        if errorlevel 1 ( {_BAT_FAIL} )',
+                    f'    ) else (',
+                    f'        !fastboot! flash {part} "images\\{img}"',
+                    f'        if errorlevel 1 ( {_BAT_FAIL} )',
+                    f'    )',
+                    f')',
+                    '',
+                ]
+            cmds.append(f'!fastboot! flash {part}_a/_b images\\{img}')
 
     return lines, cmds
+
+
+def _inject_flash_block(template_text: str, flash_lines: list[str]) -> str:
+    """Replace content between MEZO markers with generated flash commands."""
+    start_idx = template_text.find(FLASH_BLOCK_START)
+    end_idx   = template_text.find(FLASH_BLOCK_END)
+    if start_idx == -1 or end_idx == -1:
+        raise ValueError(
+            f"MEZO markers not found in template — "
+            f"expected '{FLASH_BLOCK_START}' and '{FLASH_BLOCK_END}'"
+        )
+    start_eol = template_text.index("\n", start_idx) + 1
+    block = "\n".join(flash_lines) + "\n" if flash_lines else ""
+    return template_text[:start_eol] + block + template_text[end_idx:]
+
+
+def _strip_choice_prompt(lines: list[str]) -> list[str]:
+    """Remove the 'Please Choose Format Option' section from a script."""
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if "Please Choose Format Option" in line:
+            # Also remove the preceding separator line if present
+            while result and "=========================" in result[-1]:
+                result.pop()
+            # Skip until (and including) the set /p CHOICE= line
+            while i < len(lines) and 'set /p CHOICE=' not in lines[i]:
+                i += 1
+            i += 1  # skip the CHOICE line itself
+            continue
+        result.append(line)
+        i += 1
+    return result
+
+
+def _strip_wipe_block(lines: list[str]) -> list[str]:
+    """Remove the conditional wipe block (if /I "%CHOICE%"=="y" ...)."""
+    result: list[str] = []
+    depth = 0
+    skipping = False
+    for line in lines:
+        stripped = line.rstrip()
+        if not skipping and 'if /I "%CHOICE%"' in line and '==' in line:
+            skipping = True
+            depth = stripped.count('(') - stripped.count(')')
+            continue
+        if skipping:
+            depth += stripped.count('(') - stripped.count(')')
+            if depth <= 0:
+                skipping = False
+            continue
+        result.append(line)
+    return result
+
+
+def _make_wipe_unconditional(lines: list[str]) -> list[str]:
+    """Replace the conditional wipe block with an unconditional wipe + error checks."""
+    result:    list[str] = []
+    depth      = 0
+    replacing  = False
+    injected   = False
+
+    for line in lines:
+        stripped = line.rstrip()
+        if not replacing and 'if /I "%CHOICE%"' in line and '==' in line:
+            replacing = True
+            depth = stripped.count('(') - stripped.count(')')
+            if not injected:
+                result += [
+                    'echo.  Formatting...\n',
+                    '!fastboot! erase frp  >NUL 2>NUL\n',
+                    '!fastboot! erase userdata  >NUL 2>NUL\n',
+                    'if errorlevel 1 ( echo Erase userdata failed. Do not disconnect. & pause & exit /b 1 )\n',
+                    '!fastboot! erase metadata  >NUL 2>NUL\n',
+                    'if errorlevel 1 ( echo Erase metadata failed. Do not disconnect. & pause & exit /b 1 )\n',
+                    'echo.\n',
+                ]
+                injected = True
+            continue
+        if replacing:
+            depth += stripped.count('(') - stripped.count(')')
+            if depth <= 0:
+                replacing = False
+            continue
+        result.append(line)
+    return result
 
 
 def _gen_windows_scripts(
@@ -311,7 +452,7 @@ def _gen_windows_scripts(
     codename: str,
     rom_version: str,
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Generate 3 Windows BAT flash scripts from images present in img_dir.
+    """Generate 3 Windows BAT scripts from script2flash template + actual images.
 
     Returns: (errors, warnings, unknown_imgs, flash_cmds_summary)
     """
@@ -321,7 +462,6 @@ def _gen_windows_scripts(
 
     available = {p.name for p in img_dir.glob("*.img")}
 
-    # Validate required images are present
     for req in sorted(REQUIRED_IMAGES):
         if req not in available:
             errors.append(f"Required image missing: {req}")
@@ -333,112 +473,85 @@ def _gen_windows_scripts(
         warnings.append(f"Unknown images (not flashed): {', '.join(unknown)}")
 
     flash_lines, flash_cmds = _build_bat_flash_block(available)
-    flash_block = "\n".join(flash_lines)
 
-    # ── windows_install_upgrade.bat ───────────────────────────────────────────
+    # Read the script2flash template — required
+    tpl_path = WORK_DIR / SCRIPT2FLASH_TEMPLATE
+    if not tpl_path.is_file():
+        errors.append(f"script2flash template not found: {tpl_path}")
+        return errors, warnings, unknown, []
+
+    template = tpl_path.read_text(encoding="utf-8", errors="replace")
+
+    # Inject generated flash block between MEZO markers
+    try:
+        injected = _inject_flash_block(template, flash_lines)
+    except ValueError as exc:
+        errors.append(str(exc))
+        return errors, warnings, unknown, []
+
+    # ── windows_install_upgrade.bat (dirty flash — no wipe) ───────────────────
+    upgrade_lines = injected.splitlines(keepends=True)
+    upgrade_lines = _strip_choice_prompt(upgrade_lines)
+    upgrade_lines = _strip_wipe_block(upgrade_lines)
+    # Update title
     upgrade_lines = [
-        _BAT_FASTBOOT_SETUP,
-        "",
-        "echo ============================================================",
-        f"echo   DeadZone ROM - Upgrade (no data wipe)",
-        f"echo   Device: {codename}",
-        f"echo   ROM:    {rom_version}",
-        "echo   DO NOT disconnect during flashing!",
-        "echo ============================================================",
-        "echo.",
-        "",
-        flash_block,
-        "echo.",
-        "echo All partitions flashed successfully!",
-        "echo Rebooting to system...",
-        '%fastboot% reboot',
-        "pause",
+        l.replace("title DeadZone ROM Installer",
+                  f"title DeadZone ROM - Upgrade (no data wipe) | {codename}")
+        for l in upgrade_lines
     ]
     (staging / "windows_install_upgrade.bat").write_text(
-        "\n".join(upgrade_lines) + "\n", encoding="utf-8"
+        "".join(upgrade_lines), encoding="utf-8"
     )
 
-    # ── windows_install_and_format_data.bat ───────────────────────────────────
+    # ── windows_install_and_format_data.bat (clean flash — always wipes) ──────
+    clean_lines = injected.splitlines(keepends=True)
+    clean_lines = _strip_choice_prompt(clean_lines)
+    clean_lines = _make_wipe_unconditional(clean_lines)
     clean_lines = [
-        _BAT_FASTBOOT_SETUP,
-        "",
-        "echo ============================================================",
-        f"echo   DeadZone ROM - Clean Install (WIPES userdata)",
-        f"echo   Device: {codename}",
-        f"echo   ROM:    {rom_version}",
-        "echo   WARNING: userdata WILL be erased!",
-        "echo   DO NOT disconnect during flashing!",
-        "echo ============================================================",
-        "echo.",
-        "echo Starting in 10 seconds... Close window to cancel.",
-        "timeout /t 10 /nobreak >nul",
-        "echo.",
-        "",
-        flash_block,
-        "echo.",
-        "echo All partitions flashed. Erasing metadata and userdata...",
-        '%fastboot% erase metadata',
-        'if errorlevel 1 (',
-        '    echo.',
-        '    echo Erase metadata failed. Do not disconnect the phone.',
-        '    pause',
-        '    exit /b 1',
-        ')',
-        '%fastboot% erase userdata',
-        'if errorlevel 1 (',
-        '    echo.',
-        '    echo Erase userdata failed. Do not disconnect the phone.',
-        '    pause',
-        '    exit /b 1',
-        ')',
-        "echo Done! Rebooting...",
-        '%fastboot% reboot',
-        "pause",
+        l.replace("title DeadZone ROM Installer",
+                  f"title DeadZone ROM - Clean Install (WIPES) | {codename}")
+        for l in clean_lines
     ]
     (staging / "windows_install_and_format_data.bat").write_text(
-        "\n".join(clean_lines) + "\n", encoding="utf-8"
+        "".join(clean_lines), encoding="utf-8"
     )
 
-    # ── windows_format_data_only.bat ──────────────────────────────────────────
+    # ── windows_format_data_only.bat (erase only, no flash) ───────────────────
     fmt_lines = [
-        "@echo off",
-        "set fastboot=bin\\windows\\fastboot.exe",
-        'if not exist "%fastboot%" set fastboot=fastboot',
-        "",
-        "echo ============================================================",
-        "echo   DeadZone ROM - Format Data Only",
-        "echo   WARNING: This will erase all user data!",
-        "echo   DO NOT disconnect during operation!",
-        "echo ============================================================",
-        "echo.",
-        "",
-        "echo Erasing metadata...",
-        '%fastboot% erase metadata',
-        'if errorlevel 1 (',
-        '    echo.',
-        '    echo Erase metadata failed. Do not disconnect the phone.',
-        '    pause',
-        '    exit /b 1',
-        ')',
-        "",
-        "echo Erasing userdata...",
-        '%fastboot% erase userdata',
-        'if errorlevel 1 (',
-        '    echo.',
-        '    echo Erase userdata failed. Do not disconnect the phone.',
-        '    pause',
-        '    exit /b 1',
-        ')',
-        "",
-        "echo Done! Rebooting...",
-        '%fastboot% reboot',
-        "pause",
+        "@echo off&setlocal enabledelayedexpansion\n",
+        "title DeadZone ROM - Format Data Only\n",
+        "cd %~dp0\n",
+        "set fastboot=bin\\windows\\fastboot.exe\n",
+        'if not exist "%fastboot%" set fastboot=fastboot\n',
+        "echo.\n",
+        "echo.=========================================================================================\n",
+        "echo.  DeadZone ROM - Format Data Only\n",
+        "echo.  WARNING: This will erase all user data!\n",
+        "echo.  DO NOT disconnect during operation!\n",
+        "echo.=========================================================================================\n",
+        "echo.\n",
+        "echo.Make Sure Your Devices Is On Fastboot Mode\n",
+        "pause >NUL 2>NUL\n",
+        "\n",
+        "echo.  Erasing metadata...\n",
+        "!fastboot! erase metadata  >NUL 2>NUL\n",
+        "if errorlevel 1 ( echo Erase metadata failed. Do not disconnect. & pause & exit /b 1 )\n",
+        "\n",
+        "echo.  Erasing userdata...\n",
+        "!fastboot! erase userdata  >NUL 2>NUL\n",
+        "if errorlevel 1 ( echo Erase userdata failed. Do not disconnect. & pause & exit /b 1 )\n",
+        "\n",
+        "echo.  Done! Rebooting...\n",
+        "!fastboot! reboot\n",
+        "pause\n",
+        "exit\n",
     ]
     (staging / "windows_format_data_only.bat").write_text(
-        "\n".join(fmt_lines) + "\n", encoding="utf-8"
+        "".join(fmt_lines), encoding="utf-8"
     )
 
-    print(f"[PACKAGE] Generated Windows BAT scripts ({len(flash_cmds)} flash commands)")
+    print(f"[PACKAGE] Generated Windows scripts from template: {tpl_path.name}")
+    print(f"[PACKAGE]   flash commands injected: {len(flash_cmds)}")
     for cmd in flash_cmds:
         print(f"  {cmd}")
 
@@ -448,9 +561,6 @@ def _gen_windows_scripts(
 def _validate_generated_bat_scripts(staging: Path, available_imgs: set[str]) -> list[str]:
     """Sanity-check the generated Windows BAT scripts."""
     errors: list[str] = []
-
-    # Images whose partition must end with _ab
-    _slot_imgs = frozenset(img for img, part in FLASH_MAP.items() if part.endswith("_ab"))
 
     for sname in _GEN_WIN_SCRIPTS:
         sp = staging / sname
@@ -462,43 +572,40 @@ def _validate_generated_bat_scripts(staging: Path, available_imgs: set[str]) -> 
             errors.append(f"Generated script is empty: {sname}")
             continue
 
-        # Must use lowercase %fastboot% variable
-        if "%fastboot%" not in content.lower():
-            if sname != "windows_format_data_only.bat" or "fastboot" not in content.lower():
-                errors.append(f"{sname}: must use %%fastboot%% variable (lowercase)")
+        # Upgrade/clean-install scripts must use !fastboot! (delayed expansion)
+        if sname != "windows_format_data_only.bat":
+            if "!fastboot!" not in content and "%fastboot%" not in content.lower():
+                errors.append(f"{sname}: no fastboot variable reference found")
+            if "flash" not in content.lower():
+                errors.append(f"{sname}: no flash commands found")
 
-        # Flash/erase scripts must have fastboot commands
-        if sname != "windows_format_data_only.bat" and "flash" not in content.lower():
-            errors.append(f"Generated script has no flash commands: {sname}")
-
-        # Upgrade script must NOT contain erase
+        # Upgrade script must NOT erase userdata or metadata
         if sname == "windows_install_upgrade.bat":
             if "erase metadata" in content.lower() or "erase userdata" in content.lower():
-                errors.append(f"Upgrade script must not erase userdata: {sname}")
+                errors.append(f"{sname}: upgrade script must not erase userdata")
 
         # Validate every images\xxx.img reference points to an available image
-        for m in re.finditer(r'images\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
+        for m in re.finditer(r'images\\([^\s"\'!\r\n]+\.img)', content, re.IGNORECASE):
             ref = m.group(1)
             if ref not in available_imgs:
-                errors.append(f"{sname}: references images\\{ref} which is not available")
+                errors.append(f"{sname}: references images\\{ref} — not in available images")
 
-        # Validate slot images use _ab partition names, super uses 'super'
+        # Validate slot images use _a/_b (not _ab), super uses 'super'
+        # Match: !fastboot! flash <part> "images\<img>"
         for m in re.finditer(
-            r'%fastboot%\s+flash\s+(\S+)\s+images\\(\S+\.img)',
+            r'!fastboot!\s+flash\s+(\S+)\s+"images\\([^"]+\.img)"',
             content, re.IGNORECASE
         ):
             part, img = m.group(1), m.group(2)
-            expected = FLASH_MAP.get(img)
-            if expected is None:
-                continue
-            if img in _slot_imgs and not part.endswith("_ab"):
-                errors.append(
-                    f"{sname}: {img} flashed as '{part}' — expected '{expected}' (_ab required)"
-                )
             if img == "super.img" and part != "super":
-                errors.append(
-                    f"{sname}: super.img must flash as 'super', got '{part}'"
-                )
+                errors.append(f"{sname}: super.img must flash as 'super', got '{part}'")
+            if img not in NON_SLOT_IMGS and img not in PRELOADER_IMGS:
+                base = FLASH_MAP.get(img, "")
+                if base and part not in (f"{base}_a", f"{base}_b", base):
+                    errors.append(
+                        f"{sname}: {img} flashed as '{part}' — "
+                        f"expected '{base}_a'/'{base}_b' (AB) or '{base}' (A)"
+                    )
 
     return errors
 
