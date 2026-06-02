@@ -567,11 +567,21 @@ def finish_build(
     state  = load_state()
     final  = status.upper()
 
-    if upload_url:       state["upload_url"]          = upload_url
-    if final_zip_name:   state["final_zip_name"]       = final_zip_name
-    if final_zip_size_mib: state["final_zip_size_mib"] = final_zip_size_mib
-    if error_text:       state["error_text"]           = error_text[:200]
-    if failed_stage:     state["failed_stage"]         = failed_stage
+    if upload_url:         state["upload_url"]          = upload_url
+    if final_zip_name:     state["final_zip_name"]       = final_zip_name
+    if final_zip_size_mib: state["final_zip_size_mib"]   = final_zip_size_mib
+    if error_text:         state["error_text"]           = error_text[:200]
+    if failed_stage:       state["failed_stage"]         = failed_stage
+
+    if final in ("OK", "DONE"):
+        # Mark every stage OK so progress shows 100% and all stages show ✅
+        existing_ok = {
+            ev["id"] for ev in state.get("events", [])
+            if ev.get("status") in ("OK", "DONE")
+        }
+        for sid, _icon, label in STAGES:
+            if sid not in existing_ok:
+                state["events"].append({"id": sid, "status": "OK", "label": label})
 
     state["status"] = "done" if final in ("OK", "DONE") else "failed"
     state.setdefault("events", []).append({"id": "final", "status": final, "label": "Build complete"})

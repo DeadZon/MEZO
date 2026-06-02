@@ -98,8 +98,8 @@ jobs:
       - name: Telegram - Build Done
         if: ${{ inputs.notify_telegram && success() }}
         run: |
-          sudo -E python3 scripts/telegram.py update build_rom OK
-          sudo -E python3 scripts/telegram.py update pack_rom RUN
+          sudo -E python3 scripts/telegram.py update unpack OK
+          sudo -E python3 scripts/telegram.py update mods OK
 
       # ── Pack ROM (with live log watcher) ──────────────────────────────────
       - name: Pack ROM
@@ -129,13 +129,41 @@ jobs:
 
       - name: Telegram - Pack Done
         if: ${{ inputs.notify_telegram && success() }}
-        run: sudo -E python3 scripts/telegram.py update pack_rom OK
+        run: |
+          sudo -E python3 scripts/telegram.py update rebuild OK
+          sudo -E python3 scripts/telegram.py update super OK
+          sudo -E python3 scripts/telegram.py update vbmeta OK
 
       # ── Package final ROM ZIP (DeadZone template) ────────────────────────
       - name: Package ROM ZIP
         run: |
-          sudo -E python3 scripts/package_rom.py
+          set +eo pipefail
+
+          LOG=/tmp/mezo_package.log
+          : > "$LOG"
+
+          if [ "${{ inputs.notify_telegram }}" = "true" ]; then
+            rm -f /tmp/tg_watch_stop
+            sudo -E python3 scripts/tg_watch.py "$LOG" zip &
+            TG_PID=$!
+          fi
+
+          sudo -E python3 scripts/package_rom.py 2>&1 | tee "$LOG"
+          STEP_EXIT=${PIPESTATUS[0]}
+
+          if [ "${{ inputs.notify_telegram }}" = "true" ]; then
+            touch /tmp/tg_watch_stop
+            sleep 2
+            sudo kill "$TG_PID" 2>/dev/null || true
+          fi
+
           echo "[PACKAGE] ZIP path: $(cat output/reports/final_zip_path.txt)"
+          set -eo pipefail
+          exit $STEP_EXIT
+
+      - name: Telegram - Package Done
+        if: ${{ inputs.notify_telegram && success() }}
+        run: sudo -E python3 scripts/telegram.py update zip OK
 
       # ── PixelDrain upload (primary upload path) ───────────────────────────
       - name: Telegram - Upload Starting
@@ -197,4 +225,4 @@ jobs:
         run: |
           sudo rm -rf "${{ github.workspace }}/out"   || true
           sudo rm -rf "${{ github.workspace }}/build" || true
-          rm -f /tmp/tg_watch_stop /tmp/mezo_build.log /tmp/mezo_pack.log || true
+          rm -f /tmp/tg_watch_stop /tmp/mezo_build.log /tmp/mezo_pack.log /tmp/mezo_package.log || true
