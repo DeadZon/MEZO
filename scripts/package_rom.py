@@ -65,41 +65,96 @@ OPTIONAL_IMGS = [
     "tee.img", "vcp.img", "preloader_raw.img",
 ]
 
-# img filename → fastboot partition name (only safe, known partitions)
+# img filename → fastboot partition name (VAB/MTK _ab style; super is non-slot)
 FLASH_MAP: dict[str, str] = {
-    "boot.img":           "boot",
-    "init_boot.img":      "init_boot",
-    "vendor_boot.img":    "vendor_boot",
-    "dtbo.img":           "dtbo",
-    "logo.img":           "logo",
-    "cust.img":           "cust",
-    "rescue.img":         "rescue",
-    "super.img":          "super",
-    "vbmeta.img":         "vbmeta",
-    "vbmeta_system.img":  "vbmeta_system",
-    "vbmeta_vendor.img":  "vbmeta_vendor",
-    "vbmeta_product.img": "vbmeta_product",
-    "vbmeta_odm.img":     "vbmeta_odm",
+    # Boot / kernel slot images
+    "boot.img":             "boot_ab",
+    "init_boot.img":        "init_boot_ab",
+    "vendor_boot.img":      "vendor_boot_ab",
+    "dtbo.img":             "dtbo_ab",
+    # vbmeta slot images
+    "vbmeta.img":           "vbmeta_ab",
+    "vbmeta_system.img":    "vbmeta_system_ab",
+    "vbmeta_vendor.img":    "vbmeta_vendor_ab",
+    "vbmeta_product.img":   "vbmeta_product_ab",
+    "vbmeta_odm.img":       "vbmeta_odm_ab",
+    # super (logical partition, non-slot)
+    "super.img":            "super",
+    # Display / misc slot images
+    "logo.img":             "logo_ab",
+    "cust.img":             "cust_ab",
+    "rescue.img":           "rescue_ab",
+    # MTK firmware slot images
+    "lk.img":               "lk_ab",
+    "md1img.img":           "md1img_ab",
+    "spmfw.img":            "spmfw_ab",
+    "scp.img":              "scp_ab",
+    "sspm.img":             "sspm_ab",
+    "tee.img":              "tee_ab",
+    "gz.img":               "gz_ab",
+    "dpm.img":              "dpm_ab",
+    "ccu.img":              "ccu_ab",
+    "apusys.img":           "apusys_ab",
+    "audio_dsp.img":        "audio_dsp_ab",
+    "connsys_bt.img":       "connsys_bt_ab",
+    "connsys_gnss.img":     "connsys_gnss_ab",
+    "connsys_wifi.img":     "connsys_wifi_ab",
+    "gpueb.img":            "gpueb_ab",
+    "mcf_ota.img":          "mcf_ota_ab",
+    "mcupm.img":            "mcupm_ab",
+    "mvpu_algo.img":        "mvpu_algo_ab",
+    "pi_img.img":           "pi_img_ab",
+    "preloader_raw.img":    "preloader_raw_ab",
+    "vcp.img":              "vcp_ab",
 }
 
 # Must exist before the ZIP is built; fail hard if missing
 REQUIRED_IMAGES: frozenset[str] = frozenset({"super.img", "vbmeta.img"})
 
-# Flash order inside the generated BAT scripts
+# Flash order inside the generated BAT scripts.
+# Mirrors Xiaomi/MTK reference scripts: bootloader/firmware first,
+# vbmeta partitions next, super last.
 FLASH_ORDER: list[str] = [
-    "dtbo.img",
+    # Bootloader / preloader
+    "preloader_raw.img",
+    "lk.img",
+    # Boot / kernel slot images
     "boot.img",
     "init_boot.img",
+    "dtbo.img",
     "vendor_boot.img",
-    "super.img",
+    # MTK firmware slot images
+    "md1img.img",
+    "spmfw.img",
+    "scp.img",
+    "sspm.img",
+    "tee.img",
+    "gz.img",
+    "dpm.img",
+    "ccu.img",
+    "apusys.img",
+    "audio_dsp.img",
+    "connsys_bt.img",
+    "connsys_gnss.img",
+    "connsys_wifi.img",
+    "gpueb.img",
+    "mcf_ota.img",
+    "mcupm.img",
+    "mvpu_algo.img",
+    "pi_img.img",
+    "vcp.img",
+    # Display / misc
+    "logo.img",
+    "cust.img",
+    "rescue.img",
+    # vbmeta (slot images, before super)
     "vbmeta_system.img",
     "vbmeta_vendor.img",
     "vbmeta_product.img",
     "vbmeta_odm.img",
     "vbmeta.img",
-    "logo.img",
-    "cust.img",
-    "rescue.img",
+    # super last (logical / non-slot)
+    "super.img",
 ]
 
 FORBIDDEN_ENTRIES = [
@@ -193,10 +248,8 @@ def _flatten_template(staging: Path) -> str | None:
 _BAT_FASTBOOT_SETUP = (
     "@echo off\n"
     "setlocal enabledelayedexpansion\n"
-    "set SCRIPT_DIR=%~dp0\n"
-    "set IMG=%SCRIPT_DIR%images\n"
-    "set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe\n"
-    'if not exist "%FASTBOOT%" set FASTBOOT=fastboot'
+    "set fastboot=bin\\windows\\fastboot.exe\n"
+    'if not exist "%fastboot%" set fastboot=fastboot'
 )
 
 
@@ -215,18 +268,18 @@ def _build_bat_flash_block(available_imgs: set[str]) -> tuple[list[str], list[st
         if part is None:
             continue
 
-        cmds.append(f"fastboot flash {part} images\\{img}")
+        cmds.append(f"%fastboot% flash {part} images\\{img}")
         is_req = img in REQUIRED_IMAGES
 
         if is_req:
             lines += [
                 f":: Required: {img}",
-                f'if not exist "%IMG%\\{img}" (',
+                f'if not exist "images\\{img}" (',
                 f'    echo ERROR: images\\{img} not found. DO NOT disconnect!',
                 f'    pause',
                 f'    exit /b 1',
                 f')',
-                f'"%FASTBOOT%" flash {part} "%IMG%\\{img}"',
+                f'%fastboot% flash {part} images\\{img}',
                 f'if errorlevel 1 (',
                 f'    echo.',
                 f'    echo Flash failed. Do not disconnect the phone.',
@@ -237,8 +290,8 @@ def _build_bat_flash_block(available_imgs: set[str]) -> tuple[list[str], list[st
             ]
         else:
             lines += [
-                f'if exist "%IMG%\\{img}" (',
-                f'    "%FASTBOOT%" flash {part} "%IMG%\\{img}"',
+                f'if exist "images\\{img}" (',
+                f'    %fastboot% flash {part} images\\{img}',
                 f'    if errorlevel 1 (',
                 f'        echo.',
                 f'        echo Flash failed. Do not disconnect the phone.',
@@ -298,7 +351,7 @@ def _gen_windows_scripts(
         "echo.",
         "echo All partitions flashed successfully!",
         "echo Rebooting to system...",
-        '"%FASTBOOT%" reboot',
+        '%fastboot% reboot',
         "pause",
     ]
     (staging / "windows_install_upgrade.bat").write_text(
@@ -324,14 +377,14 @@ def _gen_windows_scripts(
         flash_block,
         "echo.",
         "echo All partitions flashed. Erasing metadata and userdata...",
-        '"%FASTBOOT%" erase metadata',
+        '%fastboot% erase metadata',
         'if errorlevel 1 (',
         '    echo.',
         '    echo Erase metadata failed. Do not disconnect the phone.',
         '    pause',
         '    exit /b 1',
         ')',
-        '"%FASTBOOT%" erase userdata',
+        '%fastboot% erase userdata',
         'if errorlevel 1 (',
         '    echo.',
         '    echo Erase userdata failed. Do not disconnect the phone.',
@@ -339,7 +392,7 @@ def _gen_windows_scripts(
         '    exit /b 1',
         ')',
         "echo Done! Rebooting...",
-        '"%FASTBOOT%" reboot',
+        '%fastboot% reboot',
         "pause",
     ]
     (staging / "windows_install_and_format_data.bat").write_text(
@@ -349,9 +402,8 @@ def _gen_windows_scripts(
     # ── windows_format_data_only.bat ──────────────────────────────────────────
     fmt_lines = [
         "@echo off",
-        "set SCRIPT_DIR=%~dp0",
-        "set FASTBOOT=%SCRIPT_DIR%bin\\windows\\fastboot.exe",
-        'if not exist "%FASTBOOT%" set FASTBOOT=fastboot',
+        "set fastboot=bin\\windows\\fastboot.exe",
+        'if not exist "%fastboot%" set fastboot=fastboot',
         "",
         "echo ============================================================",
         "echo   DeadZone ROM - Format Data Only",
@@ -361,7 +413,7 @@ def _gen_windows_scripts(
         "echo.",
         "",
         "echo Erasing metadata...",
-        '"%FASTBOOT%" erase metadata',
+        '%fastboot% erase metadata',
         'if errorlevel 1 (',
         '    echo.',
         '    echo Erase metadata failed. Do not disconnect the phone.',
@@ -370,7 +422,7 @@ def _gen_windows_scripts(
         ')',
         "",
         "echo Erasing userdata...",
-        '"%FASTBOOT%" erase userdata',
+        '%fastboot% erase userdata',
         'if errorlevel 1 (',
         '    echo.',
         '    echo Erase userdata failed. Do not disconnect the phone.',
@@ -379,7 +431,7 @@ def _gen_windows_scripts(
         ')',
         "",
         "echo Done! Rebooting...",
-        '"%FASTBOOT%" reboot',
+        '%fastboot% reboot',
         "pause",
     ]
     (staging / "windows_format_data_only.bat").write_text(
@@ -397,6 +449,9 @@ def _validate_generated_bat_scripts(staging: Path, available_imgs: set[str]) -> 
     """Sanity-check the generated Windows BAT scripts."""
     errors: list[str] = []
 
+    # Images whose partition must end with _ab
+    _slot_imgs = frozenset(img for img, part in FLASH_MAP.items() if part.endswith("_ab"))
+
     for sname in _GEN_WIN_SCRIPTS:
         sp = staging / sname
         if not sp.is_file():
@@ -406,18 +461,44 @@ def _validate_generated_bat_scripts(staging: Path, available_imgs: set[str]) -> 
         if not content.strip():
             errors.append(f"Generated script is empty: {sname}")
             continue
-        # Upgrade and clean-install scripts must have fastboot commands
-        if sname != "windows_format_data_only.bat" and "fastboot" not in content.lower():
-            errors.append(f"Generated script has no fastboot commands: {sname}")
-        # Upgrade script must NOT erase userdata
+
+        # Must use lowercase %fastboot% variable
+        if "%fastboot%" not in content.lower():
+            if sname != "windows_format_data_only.bat" or "fastboot" not in content.lower():
+                errors.append(f"{sname}: must use %%fastboot%% variable (lowercase)")
+
+        # Flash/erase scripts must have fastboot commands
+        if sname != "windows_format_data_only.bat" and "flash" not in content.lower():
+            errors.append(f"Generated script has no flash commands: {sname}")
+
+        # Upgrade script must NOT contain erase
         if sname == "windows_install_upgrade.bat":
             if "erase metadata" in content.lower() or "erase userdata" in content.lower():
                 errors.append(f"Upgrade script must not erase userdata: {sname}")
-        # No script must reference a missing image
-        for m in re.finditer(r'%IMG%\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
+
+        # Validate every images\xxx.img reference points to an available image
+        for m in re.finditer(r'images\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
             ref = m.group(1)
             if ref not in available_imgs:
                 errors.append(f"{sname}: references images\\{ref} which is not available")
+
+        # Validate slot images use _ab partition names, super uses 'super'
+        for m in re.finditer(
+            r'%fastboot%\s+flash\s+(\S+)\s+images\\(\S+\.img)',
+            content, re.IGNORECASE
+        ):
+            part, img = m.group(1), m.group(2)
+            expected = FLASH_MAP.get(img)
+            if expected is None:
+                continue
+            if img in _slot_imgs and not part.endswith("_ab"):
+                errors.append(
+                    f"{sname}: {img} flashed as '{part}' — expected '{expected}' (_ab required)"
+                )
+            if img == "super.img" and part != "super":
+                errors.append(
+                    f"{sname}: super.img must flash as 'super', got '{part}'"
+                )
 
     return errors
 
@@ -487,7 +568,7 @@ def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
             if not n.lower().endswith(".bat"):
                 continue
             content = zf.read(n).decode("utf-8", errors="replace")
-            for m in re.finditer(r'%IMG%\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
+            for m in re.finditer(r'images\\([^\s"\'%\r\n]+\.img)', content, re.IGNORECASE):
                 ref = m.group(1).lower()
                 if f"images/{ref}" not in names_lower:
                     errors.append(f"{n}: references images\\{m.group(1)} which is not in ZIP")
