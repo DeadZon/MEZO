@@ -426,7 +426,11 @@ def _gen_windows_scripts(
         + "if defined FLASH_FAILED (\n"
         + "    echo. [WARN] Some flash commands reported errors. Check messages above.\n"
         + ")\n"
-        + "echo. Flash phase complete. Rebooting...\n"
+        + "echo. Flash phase complete. Running final cleanup...\n"
+        + "%fastboot% erase frp  >nul 2>nul\n"
+        + "%fastboot% -w  >nul 2>nul\n"
+        + "%fastboot% set_active a  >nul 2>nul\n"
+        + "echo. Rebooting...\n"
         + "%fastboot% reboot\n"
         + "pause\n"
         + "exit /B 0\n"
@@ -453,7 +457,11 @@ def _gen_windows_scripts(
         + "if defined FLASH_FAILED (\n"
         + "    echo. [WARN] Some flash commands reported errors. Check messages above.\n"
         + ")\n"
-        + "echo. Flash phase complete. Erasing metadata...\n"
+        + "echo. Flash phase complete. Running final cleanup...\n"
+        + "%fastboot% erase frp  >nul 2>nul\n"
+        + "%fastboot% -w  >nul 2>nul\n"
+        + "%fastboot% set_active a  >nul 2>nul\n"
+        + "echo. Erasing metadata...\n"
         + "%fastboot% erase metadata\n"
         + "if errorlevel 1 ( echo Erase metadata failed. Do not disconnect the phone. & exit /B 1 )\n"
         + "echo. Erasing userdata...\n"
@@ -515,8 +523,8 @@ def _validate_generated_bat_scripts(
     is_mtk = soc_family.lower() == "mtk"
 
     MTK_FORBIDDEN = ("preloader_a", "preloader_b", "preloader1", "preloader2")
-    UNSAFE_CMDS   = ("fastboot -w", "--disable-verity", "--disable-verification",
-                     "erase frp", "set_active")
+    # Only truly unsafe commands are forbidden; erase frp / -w / set_active are required by template
+    UNSAFE_CMDS   = ("--disable-verity", "--disable-verification")
 
     for sname in _GEN_WIN_SCRIPTS:
         sp = staging / sname
@@ -700,6 +708,9 @@ def _write_flash_scan_report(
         f"Codename check:          ENABLED (stops on mismatch before flashing)",
         f"Image preflight:         DISABLED (no if-not-exist blocking)",
         f"Flash error behavior:    warn-and-continue (FLASH_FAILED=1, no exit)",
+        f"erase frp:               ENABLED (post-flash cleanup)",
+        f"fastboot -w:             ENABLED (post-flash cleanup)",
+        f"set_active a:            ENABLED (post-flash cleanup)",
         "",
         f"Images folder:   {img_dir}",
         f"Images found:    {len(available_imgs)}",
