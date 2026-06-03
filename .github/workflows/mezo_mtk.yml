@@ -6,6 +6,14 @@ on:
       input_url:
         description: 'ROM download URL'
         required: true
+      style:
+        description: 'DeadZone ROM Style'
+        required: true
+        default: 'Stable'
+        type: choice
+        options:
+          - Stable
+          - Legend
       notify_telegram:
         description: 'Live Telegram notifications'
         type: boolean
@@ -61,6 +69,24 @@ jobs:
 
       - name: Set permissions
         run: sudo chmod 777 -R *
+
+      # ── Resolve DeadZone Style ────────────────────────────────────────────
+      - name: Resolve DeadZone Style
+        run: |
+          RAW_STYLE="${{ inputs.style }}"
+          case "${RAW_STYLE,,}" in
+            stable|free)  STYLE_ID=stable ; STYLE_NAME="DeadZone Stable" ; STYLE_TIER=Free  ;;
+            legend|paid)  STYLE_ID=legend ; STYLE_NAME="DeadZone Legend" ; STYLE_TIER=Paid  ;;
+            *)
+              echo "::error::Unsupported DeadZone style: ${RAW_STYLE}"
+              exit 1
+              ;;
+          esac
+          echo "DZ_STYLE=${RAW_STYLE}"        >> "$GITHUB_ENV"
+          echo "DZ_STYLE_ID=${STYLE_ID}"      >> "$GITHUB_ENV"
+          echo "DZ_STYLE_NAME=${STYLE_NAME}"  >> "$GITHUB_ENV"
+          echo "DZ_STYLE_TIER=${STYLE_TIER}"  >> "$GITHUB_ENV"
+          echo "[STYLE] ${RAW_STYLE} → ${STYLE_ID} (${STYLE_NAME}, ${STYLE_TIER})"
 
       # ── Telegram: build started ───────────────────────────────────────────
       - name: Telegram - Started

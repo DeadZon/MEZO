@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -203,6 +204,21 @@ REQUIRED_IMAGES: frozenset[str] = frozenset({"super.img", "vbmeta.img"})
 
 FLASH_BLOCK_START = ":: BEGIN MEZO GENERATED IMAGE FLASH COMMANDS"
 FLASH_BLOCK_END   = ":: END MEZO GENERATED IMAGE FLASH COMMANDS"
+
+# ── DeadZone Style config ─────────────────────────────────────────────────────
+# Single source of truth for all styles. Add new styles here to extend the system.
+DZ_STYLES: dict[str, dict] = {
+    "stable": {
+        "id":   "stable",
+        "name": "DeadZone Stable",
+        "tier": "Free",
+    },
+    "legend": {
+        "id":   "legend",
+        "name": "DeadZone Legend",
+        "tier": "Paid",
+    },
+}
 
 FORBIDDEN_ENTRIES = [
     "output/", "build/", "work/", "logs/", "reports/",
@@ -636,6 +652,56 @@ def _validate_template_scripts(staging: Path, img_dir: Path) -> tuple[list[str],
     return errors, warnings
 
 
+# ── Style helpers ────────────────────────────────────────────────────────────
+
+def _normalize_style(style: str) -> str:
+    """Normalize raw style input to canonical DZ_STYLES key.
+
+    Accepted aliases:
+      stable, free  → stable
+      legend, paid  → legend
+
+    Raises ValueError for anything else.
+    """
+    s = style.lower().strip()
+    if s in ("stable", "free"):
+        return "stable"
+    if s in ("legend", "paid"):
+        return "legend"
+    raise ValueError(f"Unsupported DeadZone style: {style}")
+
+
+def _write_style_report(
+    raw_style: str,
+    style_id: str,
+    norm_soc: str,
+    codename: str,
+    validation_result: str,
+) -> None:
+    """Write output/reports/deadzone_style_report.txt."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = DZ_STYLES[style_id]
+    lines = [
+        "DeadZone Style Report",
+        "=" * 40,
+        f"Generated:        {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "",
+        f"Raw style input:  {raw_style}",
+        f"Normalized style: {style_id}",
+        f"Style ID:         {cfg['id']}",
+        f"Display name:     {cfg['name']}",
+        f"Tier/License:     {cfg['tier']}",
+        f"Selected SoC:     {norm_soc.upper()}",
+        f"Selected device:  {codename}",
+        "",
+        f"Validation:       {validation_result}",
+    ]
+    (REPORTS_DIR / "deadzone_style_report.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    print(f"[STYLE] Report → {REPORTS_DIR / 'deadzone_style_report.txt'}")
+
+
 # ── Dynamic BAT generation from actual images ─────────────────────────────────
 
 def _ordered_mtk_imgs(available_imgs: set[str]) -> list[str]:
@@ -739,6 +805,8 @@ def _gen_install_bat(
     rom_version: str,
     android_ver: str,
     region: str,
+    style_name: str = "DeadZone Stable",
+    style_tier: str = "Free",
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Generate windows_install_and_format_data.bat from the images actually present.
 
@@ -811,7 +879,8 @@ def _gen_install_bat(
         f'cls\n'
         f'\n'
         f'set "fastboot=bin\\windows\\fastboot.exe"\n'
-        f'set "ROM_STYLE=DeadZone Stable"\n'
+        f'set "ROM_STYLE={style_name}"\n'
+        f'set "ROM_LICENSE={style_tier}"\n'
         f'set "ROM_DEVELOPER=MEZO"\n'
         f'set "ROM_VERSION={rom_version}"\n'
         f'set "ROM_DEVICE={codename}"\n'
@@ -831,6 +900,7 @@ def _gen_install_bat(
         f'echo ================================================================\n'
         f'echo.\n'
         f'echo  [ROM] Style      : %ROM_STYLE%\n'
+        f'echo  [ROM] License    : %ROM_LICENSE%\n'
         f'echo  [ROM] Developer  : %ROM_DEVELOPER%\n'
         f'echo  [ROM] Version    : %ROM_VERSION%\n'
         f'echo  [ROM] Device     : %ROM_DEVICE%\n'
@@ -1431,7 +1501,22 @@ def package() -> Path:
     android_ver  = re.sub(r"\D", "", _read("androidver.txt") or "")
     baserom_type = _read("romtype.txt") or "payload"
 
-    zip_name = f"DeadZone_{_sanitize_name(codename)}_{rom_version}_A{android_ver}.zip"
+    # ── Resolve DeadZone Style ────────────────────────────────────────────────
+    raw_style = os.environ.get("DZ_STYLE", "Stable")
+    try:
+        style_id = _normalize_style(raw_style)
+    except ValueError as exc:
+        print(f"[STYLE] ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    style_cfg = DZ_STYLES[style_id]
+    print(
+        f"[STYLE] {raw_style!r} → {style_cfg['id']} "
+        f"({style_cfg['name']}, {style_cfg['tier']})"
+    )
+
+    # Style prefix for ZIP name: DeadZone_Stable_... or DeadZone_Legend_...
+    style_prefix = style_cfg["id"].capitalize()   # "Stable" or "Legend"
+    zip_name = f"DeadZone_{style_prefix}_{_sanitize_name(codename)}_{rom_version}_A{android_ver}.zip"
     print(f"[PACKAGE] Building: {zip_name}")
 
     # ── Resolve device ────────────────────────────────────────────────────────
@@ -1528,6 +1613,8 @@ def package() -> Path:
         rom_version    = rom_version or "UNKNOWN",
         android_ver    = android_ver or "UNKNOWN",
         region         = region,
+        style_name     = style_cfg["name"],
+        style_tier     = style_cfg["tier"],
     )
     win_warnings: list[str] = []
     unknown_imgs: list[str] = []   # no unknown images in the new generation model
@@ -1613,6 +1700,13 @@ def package() -> Path:
         flash_cmds=flash_cmds,
         skipped_pairs=skipped_pairs,
         zip_path=zip_path,
+        validation_result="PASS",
+    )
+    _write_style_report(
+        raw_style=raw_style,
+        style_id=style_id,
+        norm_soc=norm_soc,
+        codename=_sanitize_name(codename),
         validation_result="PASS",
     )
     _gen_pipeline_scan_report()

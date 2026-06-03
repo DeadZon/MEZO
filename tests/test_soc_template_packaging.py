@@ -27,6 +27,7 @@ _pkg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_pkg)
 
 _normalize_soc            = _pkg._normalize_soc
+_normalize_style          = _pkg._normalize_style
 _select_template_dir      = _pkg._select_template_dir
 _copy_template_to_staging = _pkg._copy_template_to_staging
 _validate_template_bat    = _pkg._validate_template_bat
@@ -38,6 +39,7 @@ _gen_install_bat          = _pkg._gen_install_bat
 FINAL_ZIP_TEMPLATES_DIR   = _pkg.FINAL_ZIP_TEMPLATES_DIR
 FORBIDDEN_ENTRIES         = _pkg.FORBIDDEN_ENTRIES
 _FORBIDDEN_ROOT_BATS      = _pkg._FORBIDDEN_ROOT_BATS
+DZ_STYLES                 = _pkg.DZ_STYLES
 _GEN_WIN_SCRIPTS          = _pkg._GEN_WIN_SCRIPTS
 MTK_DANGEROUS_PRELOADERS  = _pkg.MTK_DANGEROUS_PRELOADERS
 SD_NONSLOT_IMGS           = _pkg.SD_NONSLOT_IMGS
@@ -664,6 +666,182 @@ class TestRoundTrip(unittest.TestCase):
         self.assertNotIn("_ab", sd_bat)
         self.assertIn("_a", sd_bat)
         self.assertIn("_b", sd_bat)
+
+
+# ── Style normalization ───────────────────────────────────────────────────────
+
+class TestNormalizeStyle(unittest.TestCase):
+
+    def test_stable_exact(self):
+        self.assertEqual(_normalize_style("Stable"), "stable")
+
+    def test_stable_lowercase(self):
+        self.assertEqual(_normalize_style("stable"), "stable")
+
+    def test_free_alias(self):
+        self.assertEqual(_normalize_style("free"), "stable")
+
+    def test_free_capitalized(self):
+        self.assertEqual(_normalize_style("Free"), "stable")
+
+    def test_legend_exact(self):
+        self.assertEqual(_normalize_style("Legend"), "legend")
+
+    def test_legend_lowercase(self):
+        self.assertEqual(_normalize_style("legend"), "legend")
+
+    def test_paid_alias(self):
+        self.assertEqual(_normalize_style("paid"), "legend")
+
+    def test_paid_capitalized(self):
+        self.assertEqual(_normalize_style("Paid"), "legend")
+
+    def test_unknown_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            _normalize_style("premium")
+        self.assertIn("Unsupported DeadZone style", str(ctx.exception))
+        self.assertIn("premium", str(ctx.exception))
+
+    def test_empty_raises(self):
+        with self.assertRaises(ValueError):
+            _normalize_style("")
+
+
+class TestStyleConfig(unittest.TestCase):
+
+    def test_all_styles_present(self):
+        self.assertIn("stable", DZ_STYLES)
+        self.assertIn("legend", DZ_STYLES)
+
+    def test_stable_is_free(self):
+        self.assertEqual(DZ_STYLES["stable"]["tier"], "Free")
+
+    def test_legend_is_paid(self):
+        self.assertEqual(DZ_STYLES["legend"]["tier"], "Paid")
+
+    def test_stable_name(self):
+        self.assertEqual(DZ_STYLES["stable"]["name"], "DeadZone Stable")
+
+    def test_legend_name(self):
+        self.assertEqual(DZ_STYLES["legend"]["name"], "DeadZone Legend")
+
+    def test_each_style_has_id_name_tier(self):
+        for style_id, cfg in DZ_STYLES.items():
+            with self.subTest(style=style_id):
+                self.assertIn("id",   cfg)
+                self.assertIn("name", cfg)
+                self.assertIn("tier", cfg)
+                self.assertEqual(cfg["id"], style_id)
+
+
+class TestStyleInBat(unittest.TestCase):
+    """Verify the generated BAT shows the correct style and license."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _gen(self, soc, style_id):
+        cfg = DZ_STYLES[style_id]
+        _gen_install_bat(
+            staging=self.tmp,
+            available_imgs={"super.img", "vbmeta.img"},
+            norm_soc=soc,
+            codename="testdev",
+            rom_version="v1",
+            android_ver="14",
+            region="Global",
+            style_name=cfg["name"],
+            style_tier=cfg["tier"],
+        )
+        return (self.tmp / "windows_install_and_format_data.bat").read_text(encoding="utf-8")
+
+    def test_stable_mtk_shows_stable(self):
+        content = self._gen("mtk", "stable")
+        self.assertIn("DeadZone Stable", content)
+
+    def test_stable_mtk_shows_free(self):
+        content = self._gen("mtk", "stable")
+        self.assertIn("ROM_LICENSE=Free", content)
+        self.assertIn("[ROM] License", content)
+
+    def test_legend_mtk_shows_legend(self):
+        content = self._gen("mtk", "legend")
+        self.assertIn("DeadZone Legend", content)
+
+    def test_legend_mtk_shows_paid(self):
+        content = self._gen("mtk", "legend")
+        self.assertIn("ROM_LICENSE=Paid", content)
+
+    def test_stable_sd_shows_stable(self):
+        content = self._gen("snapdragon", "stable")
+        self.assertIn("DeadZone Stable", content)
+        self.assertIn("ROM_LICENSE=Free", content)
+
+    def test_legend_sd_shows_legend(self):
+        content = self._gen("snapdragon", "legend")
+        self.assertIn("DeadZone Legend", content)
+        self.assertIn("ROM_LICENSE=Paid", content)
+
+    def test_stable_does_not_show_paid(self):
+        content = self._gen("mtk", "stable")
+        self.assertNotIn("Paid", content)
+        self.assertNotIn("Legend", content)
+
+    def test_legend_does_not_show_free(self):
+        content = self._gen("mtk", "legend")
+        self.assertNotIn("ROM_LICENSE=Free", content)
+        self.assertNotIn("Stable", content)
+
+    def test_license_line_between_style_and_developer(self):
+        content = self._gen("mtk", "stable")
+        style_pos   = content.find("[ROM] Style")
+        license_pos = content.find("[ROM] License")
+        dev_pos     = content.find("[ROM] Developer")
+        self.assertGreater(license_pos, style_pos,
+                           "[ROM] License must come after [ROM] Style")
+        self.assertGreater(dev_pos, license_pos,
+                           "[ROM] Developer must come after [ROM] License")
+
+
+class TestZipNamingWithStyle(unittest.TestCase):
+    """Validate that ZIP name includes the style prefix."""
+
+    def test_stable_prefix_from_style_id(self):
+        style_id = _normalize_style("Stable")
+        prefix = DZ_STYLES[style_id]["id"].capitalize()
+        self.assertEqual(prefix, "Stable")
+
+    def test_legend_prefix_from_style_id(self):
+        style_id = _normalize_style("Legend")
+        prefix = DZ_STYLES[style_id]["id"].capitalize()
+        self.assertEqual(prefix, "Legend")
+
+    def test_stable_zip_name_format(self):
+        style_id = _normalize_style("Stable")
+        prefix = DZ_STYLES[style_id]["id"].capitalize()
+        zip_name = f"DeadZone_{prefix}_zircon_OS1.0_A14.zip"
+        self.assertTrue(zip_name.startswith("DeadZone_Stable_"))
+
+    def test_legend_zip_name_format(self):
+        style_id = _normalize_style("Legend")
+        prefix = DZ_STYLES[style_id]["id"].capitalize()
+        zip_name = f"DeadZone_{prefix}_garnet_OS2.0_A14.zip"
+        self.assertTrue(zip_name.startswith("DeadZone_Legend_"))
+
+    def test_stable_zip_name_does_not_contain_legend(self):
+        style_id = _normalize_style("Stable")
+        prefix = DZ_STYLES[style_id]["id"].capitalize()
+        zip_name = f"DeadZone_{prefix}_zircon_OS1.0_A14.zip"
+        self.assertNotIn("Legend", zip_name)
+
+    def test_legend_zip_name_does_not_contain_stable(self):
+        style_id = _normalize_style("Legend")
+        prefix = DZ_STYLES[style_id]["id"].capitalize()
+        zip_name = f"DeadZone_{prefix}_garnet_OS2.0_A14.zip"
+        self.assertNotIn("Stable", zip_name)
 
 
 if __name__ == "__main__":

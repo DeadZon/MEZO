@@ -127,6 +127,26 @@ bash $work_dir/bin/modfile/OS2/insmod.sh
 bash $work_dir/bin/modfile/OS3/insmod.sh
 bash $work_dir/bin/modfile/Universal/insfile.sh
 bash $work_dir/bin/modfile/UpdateFile/insupdate.sh
+
+# ── Style-specific mods ───────────────────────────────────────────────────────
+_DZ_STYLE_ID="${DZ_STYLE_ID:-stable}"
+case "${_DZ_STYLE_ID,,}" in
+    stable) _DZ_STYLE_DIR="Stable" ;;
+    legend) _DZ_STYLE_DIR="Legend" ;;
+    *)
+        echo "[STYLE] ERROR: Unsupported DeadZone style: ${_DZ_STYLE_ID}"
+        exit 1
+        ;;
+esac
+_DZ_STYLE_SCRIPT="$work_dir/bin/modfile/Styles/${_DZ_STYLE_DIR}/insmod.sh"
+if [[ -f "$_DZ_STYLE_SCRIPT" ]]; then
+    echo "[STYLE] Applying ${_DZ_STYLE_DIR} style mods..."
+    bash "$_DZ_STYLE_SCRIPT"
+else
+    echo "[STYLE] No style mod script found at: $_DZ_STYLE_SCRIPT (skipping)"
+fi
+unset _DZ_STYLE_ID _DZ_STYLE_DIR _DZ_STYLE_SCRIPT
+
 bash $work_dir/bin/package/patchpackage.sh
 
 find "$work_dir/build/baserom/images/" -exec touch -t 200901010000.00 {} + 2> /dev/null || true
