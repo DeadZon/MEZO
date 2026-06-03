@@ -2,7 +2,8 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 color 0B
-title DeadZone ROM Installer
+title DeadZone Snapdragon Installer
+cls
 
 set "fastboot=bin\windows\fastboot.exe"
 set "ROM_STYLE=DeadZone Stable"
@@ -13,32 +14,38 @@ set "ROM_ANDROID=ANDROID_FROM_ROM"
 set "ROM_REGION=REGION_FROM_ROM"
 set "COMPATIBLE_DEVICES=DEVICE_LIST_FROM_ROM"
 
-if not exist "%fastboot%" echo %fastboot% not found. & pause & exit /B 1
+if not exist "%fastboot%" (
+    echo [ERROR] fastboot not found: %fastboot%
+    pause
+    exit /B 1
+)
 
 echo.
 echo ================================================================
-echo                 DeadZone ROM Installer
+echo        DeadZone Snapdragon Installer  ^|  by MEZO
 echo ================================================================
 echo.
-echo [ROM] Style      : %ROM_STYLE%
-echo [ROM] Developer  : %ROM_DEVELOPER%
-echo [ROM] Version    : %ROM_VERSION%
-echo [ROM] Device     : %ROM_DEVICE%
-echo [ROM] Android    : %ROM_ANDROID%
-echo [ROM] Region     : %ROM_REGION%
+echo  [ROM] Style      : %ROM_STYLE%
+echo  [ROM] Developer  : %ROM_DEVELOPER%
+echo  [ROM] Version    : %ROM_VERSION%
+echo  [ROM] Device     : %ROM_DEVICE%
+echo  [ROM] Android    : Android %ROM_ANDROID%
+echo  [ROM] Region     : %ROM_REGION%
 echo.
 echo ================================================================
 echo.
-echo [i] - Read this information before flashing
+echo  [i] Read this information before flashing:
 echo.
-echo 1. DeadZone Stable ROM, like most other custom ROMS, requires an unlocked bootloader! If your device is NOT, please close this window.
-echo 2. You have to choose carefully else you will LOST ALL DATA!
-echo 3. THIS IS A DeadZone ROM!!! If you see someone sell , please CONTACT MEZO NOW.s
-echo 4. We will NOT take responsibility if you brick your phone or lose all data while installing this ROM.
-echo 5. Make sure you have downloaded the exact build for your device, else you might get bricked.
+echo  1. DeadZone ROM requires an UNLOCKED bootloader.
+echo     Close this window if your bootloader is NOT unlocked.
+echo  2. This will ERASE ALL your data. Proceed carefully.
+echo  3. DeadZone ROM is FREE. If anyone charges you for it,
+echo     contact MEZO immediately.
+echo  4. MEZO Team is NOT responsible for bricks or data loss.
+echo  5. Make sure this ROM build is for YOUR specific device.
 echo.
-echo [i] - If you have read and agreed to all of the above, press any key to start the installation.
-echo [i] - Else, exit this window.
+echo  [i] If you agree to all of the above, press any key to continue.
+echo  [i] Otherwise, close this window now.
 echo.
 pause >nul
 
@@ -53,7 +60,7 @@ echo Compatible devices: %COMPATIBLE_DEVICES%
 echo Your device will be flashed and the data partition will be formatted.
 echo You will lose your apps, settings and files on internal storage.
 echo Continue if you are flashing DeadZone ROM for the first time or downgrading.
-set /p choice=Do you want to continue? [y/N] 
+set /p choice=Do you want to continue? [y/N]
 if /i "%choice%" neq "y" exit /B 0
 
 echo ##############################################################

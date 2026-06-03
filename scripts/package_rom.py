@@ -5,8 +5,9 @@ Replaces old uploadROM.sh packaging.
 - Reads device info from bin/ddevice/ (populated by build.sh)
 - Resolves device config via device_resolver
 - Selects SoC-specific full template from bin/final_zip_templates/<soc>/
-- Uses template windows_install_and_format_data.bat as-is (with placeholder replacement)
-- Generates windows_install_upgrade.bat and windows_format_data_only.bat dynamically
+- Generates windows_install_and_format_data.bat dynamically from actual ROM images
+- Flash commands use MTK _ab style or Snapdragon _a/_b style based on SoC
+- Final ZIP contains exactly one root BAT: windows_install_and_format_data.bat
 - Copies .img files from build output into images/
 - Validates scripts, images, and ZIP before finalising
 - Creates: DeadZone_<codename>_<rom_version>_A<android>.zip
@@ -182,6 +183,21 @@ SD_FLASH_ORDER: list[str] = [
 FLASH_MAP  = MTK_FLASH_MAP
 FLASH_ORDER = MTK_FLASH_ORDER
 
+# MTK preloader images that must NEVER be flashed (dangerous/unsupported variants)
+MTK_DANGEROUS_PRELOADERS: frozenset[str] = frozenset({
+    "preloader.img",
+    "preloader_a.img",
+    "preloader_b.img",
+    "preloader1.img",
+    "preloader2.img",
+})
+
+# Snapdragon images that are NOT slot-based — flashed once without _a/_b suffix
+SD_NONSLOT_IMGS: frozenset[str] = frozenset({
+    "super.img",
+    "cust.img",
+})
+
 # Must exist before the ZIP is built; fail hard if missing
 REQUIRED_IMAGES: frozenset[str] = frozenset({"super.img", "vbmeta.img"})
 
@@ -198,11 +214,14 @@ FORBIDDEN_ENTRIES = [
 _TEMPLATE_SCRIPTS: list[str] = []
 
 # windows_install_and_format_data.bat comes from the SoC template (not generated).
-# Only these two are generated dynamically from actual images present:
-_GEN_WIN_SCRIPTS = [
+# No other BAT scripts are generated; the final ZIP contains exactly this one root BAT.
+_GEN_WIN_SCRIPTS: list[str] = []
+
+# Forbidden root BAT scripts — must never appear in the final ZIP
+_FORBIDDEN_ROOT_BATS = frozenset({
     "windows_install_upgrade.bat",
     "windows_format_data_only.bat",
-]
+})
 
 # Placeholders that may appear in template BAT files and are safe to replace
 _BAT_PLACEHOLDERS = frozenset({
@@ -213,7 +232,7 @@ _BAT_PLACEHOLDERS = frozenset({
     "DEVICE_LIST_FROM_ROM",
 })
 
-_REQUIRED_SCRIPTS = _TEMPLATE_SCRIPTS + _GEN_WIN_SCRIPTS
+_REQUIRED_SCRIPTS = _TEMPLATE_SCRIPTS  # only the template BAT matters now
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -617,6 +636,254 @@ def _validate_template_scripts(staging: Path, img_dir: Path) -> tuple[list[str],
     return errors, warnings
 
 
+# ── Dynamic BAT generation from actual images ─────────────────────────────────
+
+def _ordered_mtk_imgs(available_imgs: set[str]) -> list[str]:
+    """Return MTK images in flash order: known images first (per MTK_FLASH_ORDER),
+    then any extras, then super.img last. Dangerous preloaders are excluded."""
+    result: list[str] = []
+    seen:   set[str]  = set()
+    for img in MTK_FLASH_ORDER:
+        if img == "super.img":
+            continue
+        if img in available_imgs and img not in MTK_DANGEROUS_PRELOADERS:
+            result.append(img)
+            seen.add(img)
+    # Extra images not in the known order (excluding super and dangerous preloaders)
+    for img in sorted(available_imgs):
+        if img not in seen and img != "super.img" and img not in MTK_DANGEROUS_PRELOADERS:
+            result.append(img)
+            seen.add(img)
+    if "super.img" in available_imgs:
+        result.append("super.img")
+    return result
+
+
+def _ordered_sd_imgs(available_imgs: set[str]) -> list[str]:
+    """Return Snapdragon images in flash order: known images first (per SD_FLASH_ORDER),
+    then extras, then super.img last."""
+    result: list[str] = []
+    seen:   set[str]  = set()
+    for img in SD_FLASH_ORDER:
+        if img == "super.img":
+            continue
+        if img in available_imgs:
+            result.append(img)
+            seen.add(img)
+    for img in sorted(available_imgs):
+        if img not in seen and img != "super.img":
+            result.append(img)
+            seen.add(img)
+    if "super.img" in available_imgs:
+        result.append("super.img")
+    return result
+
+
+def _compute_flash_pairs(
+    available_imgs: set[str],
+    norm_soc: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Compute (partition, image_filename) pairs from actual images present.
+
+    MTK rules:
+    - Known images use MTK_FLASH_MAP (e.g. boot.img → boot_ab).
+    - Unknown images get stem_ab derived from filename (e.g. new_chip.img → new_chip_ab).
+    - super.img → super (non-slot).
+    - Dangerous preloader variants are skipped and reported.
+
+    Snapdragon rules:
+    - SD_NONSLOT_IMGS (super, cust) → single flash without suffix.
+    - All other images → flash both stem_a and stem_b.
+    - Filename is parsed as Path(img).stem — never split on _ inside the name.
+
+    Returns: (flash_pairs, skipped_pairs)
+      flash_pairs  : list[(partition_name, img_filename)] in flash order
+      skipped_pairs: list[(img_filename, reason)]
+    """
+    flash_pairs:   list[tuple[str, str]] = []
+    skipped_pairs: list[tuple[str, str]] = []
+
+    if norm_soc == "mtk":
+        for img in _ordered_mtk_imgs(available_imgs):
+            # _ordered_mtk_imgs already excludes dangerous preloaders and super
+            partition = MTK_FLASH_MAP.get(img) or f"{Path(img).stem}_ab"
+            flash_pairs.append((partition, img))
+        # Record dangerous preloaders that exist so they appear in the report
+        for img in sorted(available_imgs):
+            if img in MTK_DANGEROUS_PRELOADERS:
+                skipped_pairs.append((img, "dangerous preloader variant — skipped for safety"))
+    else:
+        for img in _ordered_sd_imgs(available_imgs):
+            stem = Path(img).stem          # e.g. "xbl_config" from "xbl_config.img"
+            if img in SD_NONSLOT_IMGS:
+                flash_pairs.append((stem, img))
+            else:
+                flash_pairs.append((f"{stem}_a", img))
+                flash_pairs.append((f"{stem}_b", img))
+
+    return flash_pairs, skipped_pairs
+
+
+# BAT title/header labels by SoC
+_INSTALL_BAT_TITLE = {
+    "mtk":        "DeadZone MTK Installer",
+    "snapdragon": "DeadZone Snapdragon Installer",
+}
+
+
+def _gen_install_bat(
+    staging: Path,
+    available_imgs: set[str],
+    norm_soc: str,
+    codename: str,
+    rom_version: str,
+    android_ver: str,
+    region: str,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Generate windows_install_and_format_data.bat from the images actually present.
+
+    Keeps the DeadZone colored header/warning style.
+    Flash block is built from available_imgs using SoC-specific rules.
+    Always ends with: fastboot erase metadata / erase userdata / reboot.
+
+    Returns: (flash_cmds_summary, skipped_pairs)
+    """
+    title = _INSTALL_BAT_TITLE.get(norm_soc, "DeadZone ROM Installer")
+    header_label = f"{title}  ^|  by MEZO"
+
+    flash_pairs, skipped_pairs = _compute_flash_pairs(available_imgs, norm_soc)
+
+    # Build flash lines for the script and a plain summary list for reports
+    bat_flash_lines: list[str] = []
+    flash_cmds_summary: list[str] = []
+    for partition, img in flash_pairs:
+        bat_flash_lines.append(f'%fastboot% flash {partition} "images\\{img}"')
+        flash_cmds_summary.append(f'fastboot flash {partition} images\\{img}')
+    flash_block = "\n".join(bat_flash_lines)
+
+    # Device-detection block differs slightly between SoCs (matching template style)
+    if norm_soc == "mtk":
+        device_detect = (
+            'echo Waiting for device...\n'
+            'set "device=unknown"\n'
+            'for /f "tokens=2" %%D in (\'"%fastboot%" getvar product 2^>^&1 ^| findstr /l /b /c:"product:"\') do set "device=%%D"\n'
+            '\n'
+            'echo.\n'
+            'echo Detected device: %device%\n'
+            'echo You are going to wipe your data and internal storage.\n'
+            'echo It will delete all your files and photos stored on internal storage.\n'
+            'set /p choice=Do you agree? (Y/N)\n'
+            'if /i "%choice%" neq "y" exit /B 0'
+        )
+        progress_banner = (
+            'echo ##################################################################\n'
+            'echo Please wait. The device will reboot when installation is finished.\n'
+            'echo ##################################################################'
+        )
+        compat_line = ""
+    else:
+        device_detect = (
+            'echo Waiting for device...\n'
+            'set "device="\n'
+            'for /f "tokens=2" %%A in (\'"%fastboot%" getvar product 2^>^&1 ^| findstr "\\<product:"\') do set "device=%%A"\n'
+            'if "%device%" equ "" echo Your device could not be detected. & pause & exit /B 1\n'
+            '\n'
+            'echo Your device: %device%\n'
+            'echo Compatible devices: %COMPATIBLE_DEVICES%\n'
+            'echo Your device will be flashed and the data partition will be formatted.\n'
+            'echo You will lose your apps, settings and files on internal storage.\n'
+            'set /p choice=Do you want to continue? [y/N]\n'
+            'if /i "%choice%" neq "y" exit /B 0'
+        )
+        progress_banner = (
+            'echo ##############################################################\n'
+            'echo Please wait. The device will reboot once flashing is complete.\n'
+            'echo ##############################################################'
+        )
+        compat_line = f'set "COMPATIBLE_DEVICES={codename}"\n'
+
+    content = (
+        f'@echo off\n'
+        f'chcp 65001 >nul\n'
+        f'cd /d "%~dp0"\n'
+        f'color 0B\n'
+        f'title {title}\n'
+        f'cls\n'
+        f'\n'
+        f'set "fastboot=bin\\windows\\fastboot.exe"\n'
+        f'set "ROM_STYLE=DeadZone Stable"\n'
+        f'set "ROM_DEVELOPER=MEZO"\n'
+        f'set "ROM_VERSION={rom_version}"\n'
+        f'set "ROM_DEVICE={codename}"\n'
+        f'set "ROM_ANDROID={android_ver}"\n'
+        f'set "ROM_REGION={region}"\n'
+        f'{compat_line}'
+        f'\n'
+        f'if not exist "%fastboot%" (\n'
+        f'    echo [ERROR] fastboot not found: %fastboot%\n'
+        f'    pause\n'
+        f'    exit /B 1\n'
+        f')\n'
+        f'\n'
+        f'echo.\n'
+        f'echo ================================================================\n'
+        f'echo            {header_label}\n'
+        f'echo ================================================================\n'
+        f'echo.\n'
+        f'echo  [ROM] Style      : %ROM_STYLE%\n'
+        f'echo  [ROM] Developer  : %ROM_DEVELOPER%\n'
+        f'echo  [ROM] Version    : %ROM_VERSION%\n'
+        f'echo  [ROM] Device     : %ROM_DEVICE%\n'
+        f'echo  [ROM] Android    : Android %ROM_ANDROID%\n'
+        f'echo  [ROM] Region     : %ROM_REGION%\n'
+        f'echo.\n'
+        f'echo ================================================================\n'
+        f'echo.\n'
+        f'echo  [i] Read this information before flashing:\n'
+        f'echo.\n'
+        f'echo  1. DeadZone ROM requires an UNLOCKED bootloader.\n'
+        f'echo     Close this window if your bootloader is NOT unlocked.\n'
+        f'echo  2. This will ERASE ALL your data. Proceed carefully.\n'
+        f'echo  3. DeadZone ROM is FREE. If anyone charges you for it,\n'
+        f'echo     contact MEZO immediately.\n'
+        f'echo  4. MEZO Team is NOT responsible for bricks or data loss.\n'
+        f'echo  5. Make sure this ROM build is for YOUR specific device.\n'
+        f'echo.\n'
+        f'echo  [i] If you agree to all of the above, press any key to continue.\n'
+        f'echo  [i] Otherwise, close this window now.\n'
+        f'echo.\n'
+        f'pause >nul\n'
+        f'\n'
+        f'{device_detect}\n'
+        f'\n'
+        f'{progress_banner}\n'
+        f'%fastboot% set_active a\n'
+        f'\n'
+        f'{FLASH_BLOCK_START}\n'
+        f'{flash_block}\n'
+        f'{FLASH_BLOCK_END}\n'
+        f'\n'
+        f'%fastboot% erase metadata\n'
+        f'%fastboot% erase userdata\n'
+        f'%fastboot% reboot\n'
+    )
+
+    bat_path = staging / "windows_install_and_format_data.bat"
+    bat_path.write_text(content, encoding="utf-8")
+
+    print(
+        f"[PACKAGE] Generated windows_install_and_format_data.bat "
+        f"({len(flash_pairs)} flash commands, {norm_soc.upper()} style)"
+    )
+    for cmd in flash_cmds_summary:
+        print(f"  {cmd}")
+    if skipped_pairs:
+        for img, reason in skipped_pairs:
+            print(f"  [SKIP] {img}: {reason}")
+
+    return flash_cmds_summary, skipped_pairs
+
+
 # ── SoC template helpers ──────────────────────────────────────────────────────
 
 def _normalize_soc(soc: str) -> str:
@@ -680,7 +947,11 @@ def _replace_bat_placeholders(bat_path: Path, replacements: dict[str, str]) -> l
 
 
 def _validate_template_bat(staging: Path, norm_soc: str) -> list[str]:
-    """Validate that windows_install_and_format_data.bat in staging is present and SoC-correct."""
+    """Validate windows_install_and_format_data.bat in staging is present and SoC-correct.
+
+    For MTK: expects _ab partition names, no Snapdragon _a/_b slot pattern.
+    For Snapdragon: expects no MTK _ab partition names.
+    """
     errors: list[str] = []
     bat = staging / "windows_install_and_format_data.bat"
     if not bat.is_file():
@@ -724,7 +995,8 @@ def _write_template_report(
     staging: Path,
     template_files: list[str],
     copied_imgs: list[str],
-    placeholders_replaced: list[str],
+    flash_cmds: list[str],
+    skipped_pairs: list[tuple[str, str]],
     zip_path: Path,
     validation_result: str,
 ) -> None:
@@ -753,17 +1025,48 @@ def _write_template_report(
 
     lines += [
         "",
-        f"Real images copied ({len(copied_imgs)}):",
+        f"Real images discovered and copied ({len(copied_imgs)}):",
     ]
     for img in sorted(copied_imgs):
         lines.append(f"  {img}")
 
     lines += [
         "",
-        f"Placeholders replaced in windows_install_and_format_data.bat ({len(placeholders_replaced)}):",
+        f"Generated flash commands ({len(flash_cmds)}) in windows_install_and_format_data.bat:",
     ]
-    for ph in placeholders_replaced:
-        lines.append(f"  {ph}")
+    for cmd in flash_cmds:
+        lines.append(f"  {cmd}")
+
+    if skipped_pairs:
+        lines += ["", f"Skipped images ({len(skipped_pairs)}):"]
+        for img, reason in skipped_pairs:
+            lines.append(f"  SKIP {img}: {reason}")
+    else:
+        lines += ["", "Skipped images: none"]
+
+    # Confirm final BAT path
+    bat_path = staging / "windows_install_and_format_data.bat"
+    lines += [
+        "",
+        f"Final BAT:            windows_install_and_format_data.bat",
+        f"  Present in staging: {'YES' if bat_path.is_file() else 'NO'}",
+    ]
+
+    # Confirm which root BAT scripts are present / excluded
+    root_bats_in_zip = [e for e in zip_manifest if "/" not in e and e.lower().endswith(".bat")]
+    lines += [
+        "",
+        f"Root BAT scripts in ZIP ({len(root_bats_in_zip)}):",
+    ]
+    for b in root_bats_in_zip:
+        lines.append(f"  INCLUDED : {b}")
+    for b in sorted(_FORBIDDEN_ROOT_BATS):
+        lines.append(f"  EXCLUDED : {b}")
+    lines += [
+        "",
+        f"  windows_install_and_format_data.bat present: "
+        f"{'YES' if 'windows_install_and_format_data.bat' in root_bats_in_zip else 'NO'}",
+    ]
 
     lines += [
         "",
@@ -813,6 +1116,12 @@ def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
                 f"Expected exactly one windows_install_and_format_data.bat at ZIP root, "
                 f"found {len(root_install_bats)}"
             )
+
+        # Forbidden root BAT scripts must not be present
+        for fname in _FORBIDDEN_ROOT_BATS:
+            hits = [n for n in names if "/" not in n and n.lower() == fname.lower()]
+            if hits:
+                errors.append(f"Forbidden root BAT script found in ZIP: {fname}")
 
         # Validate every images\xxx.img reference in BAT scripts exists in the ZIP
         for n in names:
@@ -899,13 +1208,12 @@ def _write_flash_scan_report(
         for w in warnings:
             lines.append(f"  ! {w}")
 
-    lines += ["", "Generated scripts:"]
-    for name in _GEN_WIN_SCRIPTS:
-        p = staging / name
-        if p.is_file():
-            lines.append(f"  {name}  ({p.stat().st_size:,} bytes)")
-        else:
-            lines.append(f"  {name}  [NOT FOUND]")
+    lines += ["", "Root BAT script (from template):"]
+    tpl_bat = staging / "windows_install_and_format_data.bat"
+    if tpl_bat.is_file():
+        lines.append(f"  windows_install_and_format_data.bat  ({tpl_bat.stat().st_size:,} bytes)")
+    else:
+        lines.append("  windows_install_and_format_data.bat  [NOT FOUND]")
 
     (REPORTS_DIR / "flash_script_scan_report.txt").write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
@@ -1210,55 +1518,28 @@ def package() -> Path:
             print(f"  ! {img}", file=sys.stderr)
         sys.exit(1)
 
-    # ── Replace metadata placeholders in template windows_install_and_format_data.bat ──
+    # ── Generate windows_install_and_format_data.bat from actual images ──────────
     region = _read("rom_os.txt") or "Global"
-    bat_replacements = {
-        "CN_VERSION_FROM_ROM":  rom_version or "UNKNOWN",
-        "DEVICE_FROM_ROM":      _sanitize_name(codename),
-        "ANDROID_FROM_ROM":     android_ver or "UNKNOWN",
-        "REGION_FROM_ROM":      region,
-        "DEVICE_LIST_FROM_ROM": _sanitize_name(codename),
-    }
-    placeholders_replaced = _replace_bat_placeholders(
-        staging / "windows_install_and_format_data.bat", bat_replacements
+    flash_cmds, skipped_pairs = _gen_install_bat(
+        staging        = staging,
+        available_imgs = available_imgs,
+        norm_soc       = norm_soc,
+        codename       = _sanitize_name(codename),
+        rom_version    = rom_version or "UNKNOWN",
+        android_ver    = android_ver or "UNKNOWN",
+        region         = region,
     )
-    if placeholders_replaced:
-        print(
-            f"[PACKAGE] Replaced placeholders in windows_install_and_format_data.bat: "
-            f"{', '.join(placeholders_replaced)}"
-        )
+    win_warnings: list[str] = []
+    unknown_imgs: list[str] = []   # no unknown images in the new generation model
 
-    # ── Generate remaining Windows BAT scripts from actual images ─────────────
-    win_errors, win_warnings, unknown_imgs, flash_cmds = _gen_windows_scripts(
-        staging, img_dir, _sanitize_name(codename), rom_version, soc_family=norm_soc
-    )
-    if win_errors:
-        print("[PACKAGE] Windows script generation ERRORS:", file=sys.stderr)
-        for e in win_errors:
-            print(f"  ! {e}", file=sys.stderr)
-        sys.exit(1)
-    for w in win_warnings:
-        print(f"[PACKAGE] WARN: {w}", file=sys.stderr)
-
-    # ── Validate generated BAT scripts ────────────────────────────────────────
-    bat_errors = _validate_generated_bat_scripts(
-        staging, available_imgs, soc_family=norm_soc, flash_map=active_flash_map
-    )
-    if bat_errors:
-        print("[PACKAGE] BAT script validation ERRORS:", file=sys.stderr)
-        for e in bat_errors:
-            print(f"  ! {e}", file=sys.stderr)
-        sys.exit(1)
-    print(f"[PACKAGE] BAT validation: PASS ({norm_soc.upper()} style)")
-
-    # ── Validate template windows_install_and_format_data.bat ─────────────────
+    # ── Validate the generated windows_install_and_format_data.bat ────────────
     tpl_bat_errors = _validate_template_bat(staging, norm_soc)
     if tpl_bat_errors:
-        print("[PACKAGE] Template BAT validation ERRORS:", file=sys.stderr)
+        print("[PACKAGE] Generated BAT validation ERRORS:", file=sys.stderr)
         for e in tpl_bat_errors:
             print(f"  ! {e}", file=sys.stderr)
         sys.exit(1)
-    print("[PACKAGE] Template BAT validation: PASS")
+    print("[PACKAGE] Generated BAT validation: PASS")
 
     # ── Write flash scan report ───────────────────────────────────────────────
     _write_flash_scan_report(
@@ -1329,7 +1610,8 @@ def package() -> Path:
         staging=staging,
         template_files=template_files_copied,
         copied_imgs=copied_imgs,
-        placeholders_replaced=placeholders_replaced,
+        flash_cmds=flash_cmds,
+        skipped_pairs=skipped_pairs,
         zip_path=zip_path,
         validation_result="PASS",
     )
