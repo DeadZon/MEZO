@@ -4,8 +4,9 @@
 Replaces old uploadROM.sh packaging.
 - Reads device info from bin/ddevice/ (populated by build.sh)
 - Resolves device config via device_resolver
-- Extracts DeadZone_Mezo.rar template (bin/ + Linux/macOS scripts preserved)
-- Generates Windows BAT flash scripts dynamically from actual images present
+- Selects SoC-specific full template from bin/final_zip_templates/<soc>/
+- Uses template windows_install_and_format_data.bat as-is (with placeholder replacement)
+- Generates windows_install_upgrade.bat and windows_format_data_only.bat dynamically
 - Copies .img files from build output into images/
 - Validates scripts, images, and ZIP before finalising
 - Creates: DeadZone_<codename>_<rom_version>_A<android>.zip
@@ -15,6 +16,7 @@ Replaces old uploadROM.sh packaging.
 -         output/reports/final_zip_summary.json
 -         output/reports/flash_script_scan_report.txt
 -         output/reports/pipeline_script_scan_report.txt
+-         output/reports/final_zip_template_report.txt
 
 Usage:
   package_rom.py [--staging-dir <dir>]
@@ -42,14 +44,15 @@ resolve              = _drmod.resolve
 resolve_from_ddevice = _drmod.resolve_from_ddevice
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-WORK_DIR     = Path.cwd()
-DDEVICE_DIR  = WORK_DIR / "bin" / "ddevice"
-BUILD_IMAGES = WORK_DIR / "build" / "baserom" / "images"
-BUILD_FW     = WORK_DIR / "build" / "baserom" / "firmware-update"
-TEMPLATE_RAR = WORK_DIR / "DeadZone_Mezo.rar"
-STAGING_BASE = WORK_DIR / "out" / "dz_staging"
-REPORTS_DIR  = WORK_DIR / "output" / "reports"
-OUT_DIR      = WORK_DIR / "out"
+WORK_DIR              = Path.cwd()
+DDEVICE_DIR           = WORK_DIR / "bin" / "ddevice"
+BUILD_IMAGES          = WORK_DIR / "build" / "baserom" / "images"
+BUILD_FW              = WORK_DIR / "build" / "baserom" / "firmware-update"
+TEMPLATE_RAR          = WORK_DIR / "DeadZone_Mezo.rar"
+FINAL_ZIP_TEMPLATES_DIR = WORK_DIR / "bin" / "final_zip_templates"
+STAGING_BASE          = WORK_DIR / "out" / "dz_staging"
+REPORTS_DIR           = WORK_DIR / "output" / "reports"
+OUT_DIR               = WORK_DIR / "out"
 
 # img files that belong in images/ (super.img handled separately)
 OPTIONAL_IMGS = [
@@ -188,22 +191,27 @@ FLASH_BLOCK_END   = ":: END MEZO GENERATED IMAGE FLASH COMMANDS"
 FORBIDDEN_ENTRIES = [
     "output/", "build/", "work/", "logs/", "reports/",
     "payload.bin", ".git", "super.img.zst",
+    "final_zip_templates",
 ]
 
-# Linux/macOS scripts MUST come from the template (preserved exactly)
-_TEMPLATE_SCRIPTS = [
-    "linux_install_upgrade.sh", "linux_install_and_format_data.sh",
-    "linux_format_data_only.sh",
-    "macos_install_upgrade.sh", "macos_install_and_format_data.sh",
-    "macos_format_data_only.sh",
-]
+# No Linux/macOS scripts — SoC templates provide only Windows scripts and bin/
+_TEMPLATE_SCRIPTS: list[str] = []
 
-# Windows scripts are generated dynamically from actual images present
+# windows_install_and_format_data.bat comes from the SoC template (not generated).
+# Only these two are generated dynamically from actual images present:
 _GEN_WIN_SCRIPTS = [
     "windows_install_upgrade.bat",
-    "windows_install_and_format_data.bat",
     "windows_format_data_only.bat",
 ]
+
+# Placeholders that may appear in template BAT files and are safe to replace
+_BAT_PLACEHOLDERS = frozenset({
+    "CN_VERSION_FROM_ROM",
+    "DEVICE_FROM_ROM",
+    "ANDROID_FROM_ROM",
+    "REGION_FROM_ROM",
+    "DEVICE_LIST_FROM_ROM",
+})
 
 _REQUIRED_SCRIPTS = _TEMPLATE_SCRIPTS + _GEN_WIN_SCRIPTS
 
@@ -362,10 +370,12 @@ def _gen_windows_scripts(
     rom_version: str,
     soc_family: str = "mtk",
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Generate 3 standalone Windows BAT flash scripts for the given SoC.
+    """Generate windows_install_upgrade.bat and windows_format_data_only.bat.
+
+    windows_install_and_format_data.bat comes from the SoC template and is NOT generated here.
 
     Behavior:
-    - Codename check runs first; mismatch exits before any flash.
+    - Codename check runs first in upgrade script; mismatch exits before any flash.
     - Flash phase: all commands run; errors warn only (set FLASH_FAILED=1).
     - No image preflight checks; no exit /B 1 inside flash block.
     - Generator only emits commands for images present at packaging time.
@@ -437,44 +447,6 @@ def _gen_windows_scripts(
     )
     (staging / "windows_install_upgrade.bat").write_text(upgrade, encoding="utf-8")
 
-    # ── windows_install_and_format_data.bat (flash then wipe) ─────────────────
-    clean = (
-        _install_header(f"DeadZone ROM - Clean Install (WIPES userdata) | {codename} | {rom_version}")
-        + "echo.\n"
-        + "echo. =======================================================\n"
-        + "echo.  WARNING: This will ERASE ALL YOUR USER DATA!\n"
-        + "echo.  All images will be flashed, then metadata and\n"
-        + "echo.  userdata will be erased. Press any key to continue\n"
-        + "echo.  or close this window to cancel.\n"
-        + "echo. =======================================================\n"
-        + "echo.\n"
-        + "pause >nul\n"
-        + "echo.\n\n"
-        + f"{FLASH_BLOCK_START}\n"
-        + flash_block
-        + f"{FLASH_BLOCK_END}\n\n"
-        + "echo.\n"
-        + "if defined FLASH_FAILED (\n"
-        + "    echo. [WARN] Some flash commands reported errors. Check messages above.\n"
-        + ")\n"
-        + "echo. Flash phase complete. Running final cleanup...\n"
-        + "%fastboot% erase frp  >nul 2>nul\n"
-        + "%fastboot% -w  >nul 2>nul\n"
-        + "%fastboot% set_active a  >nul 2>nul\n"
-        + "echo. Erasing metadata...\n"
-        + "%fastboot% erase metadata\n"
-        + "if errorlevel 1 ( echo Erase metadata failed. Do not disconnect the phone. & exit /B 1 )\n"
-        + "echo. Erasing userdata...\n"
-        + "%fastboot% erase userdata\n"
-        + "if errorlevel 1 ( echo Erase userdata failed. Do not disconnect the phone. & exit /B 1 )\n"
-        + "echo.\n"
-        + "echo. Done! Rebooting...\n"
-        + "%fastboot% reboot\n"
-        + "pause\n"
-        + "exit /B 0\n"
-    )
-    (staging / "windows_install_and_format_data.bat").write_text(clean, encoding="utf-8")
-
     # ── windows_format_data_only.bat (erase only, no flash, no codename check) ─
     fmt = (
         f"{_BAT_HEADER}\n\n"
@@ -504,7 +476,7 @@ def _gen_windows_scripts(
     )
     (staging / "windows_format_data_only.bat").write_text(fmt, encoding="utf-8")
 
-    print(f"[PACKAGE] Generated 3 Windows BAT scripts ({len(flash_cmds)} flash commands, {style_label})")
+    print(f"[PACKAGE] Generated 2 Windows BAT scripts ({len(flash_cmds)} flash commands, {style_label})")
     for cmd in flash_cmds:
         print(f"  {cmd}")
 
@@ -645,6 +617,174 @@ def _validate_template_scripts(staging: Path, img_dir: Path) -> tuple[list[str],
     return errors, warnings
 
 
+# ── SoC template helpers ──────────────────────────────────────────────────────
+
+def _normalize_soc(soc: str) -> str:
+    """Normalize raw SoC string to 'mtk' or 'snapdragon'. Raises ValueError on unknown."""
+    s = soc.lower().strip()
+    if s in ("mtk", "mediatek"):
+        return "mtk"
+    if s in ("snapdragon", "qcom", "qualcomm"):
+        return "snapdragon"
+    raise ValueError(f"Unsupported SoC for final ZIP template: {soc}")
+
+
+def _select_template_dir(norm_soc: str) -> Path:
+    """Return the validated template path for the given normalized SoC.
+
+    Fails hard if the directory, fastboot.exe, or install BAT is missing.
+    """
+    tpl = FINAL_ZIP_TEMPLATES_DIR / norm_soc
+    if not tpl.is_dir():
+        raise FileNotFoundError(f"Template folder missing: {tpl}")
+    if not (tpl / "bin" / "windows" / "fastboot.exe").is_file():
+        raise FileNotFoundError(f"Required template file missing: {tpl}/bin/windows/fastboot.exe")
+    if not (tpl / "windows_install_and_format_data.bat").is_file():
+        raise FileNotFoundError(
+            f"Required template file missing: {tpl}/windows_install_and_format_data.bat"
+        )
+    return tpl
+
+
+def _copy_template_to_staging(template_dir: Path, staging: Path) -> list[str]:
+    """Recursively copy all files from template_dir into staging. Returns list of relative paths copied."""
+    copied: list[str] = []
+    for src in sorted(template_dir.rglob("*")):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(template_dir)
+        dst = staging / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        copied.append(str(rel))
+    return copied
+
+
+def _replace_bat_placeholders(bat_path: Path, replacements: dict[str, str]) -> list[str]:
+    """Replace known metadata placeholders in a template BAT file in-place.
+
+    Only replaces placeholders that are both known and present in the file.
+    Returns list of placeholder names that were replaced.
+    """
+    if not bat_path.is_file():
+        return []
+    content = bat_path.read_text(encoding="utf-8", errors="replace")
+    replaced: list[str] = []
+    for placeholder, value in replacements.items():
+        if placeholder in _BAT_PLACEHOLDERS and placeholder in content:
+            content = content.replace(placeholder, value)
+            replaced.append(placeholder)
+    if replaced:
+        bat_path.write_text(content, encoding="utf-8")
+    return replaced
+
+
+def _validate_template_bat(staging: Path, norm_soc: str) -> list[str]:
+    """Validate that windows_install_and_format_data.bat in staging is present and SoC-correct."""
+    errors: list[str] = []
+    bat = staging / "windows_install_and_format_data.bat"
+    if not bat.is_file():
+        errors.append("windows_install_and_format_data.bat missing from staging")
+        return errors
+
+    content = bat.read_text(encoding="utf-8", errors="replace")
+    if not content.strip():
+        errors.append("windows_install_and_format_data.bat is empty")
+        return errors
+
+    if "fastboot" not in content.lower():
+        errors.append("windows_install_and_format_data.bat: no fastboot reference found")
+
+    if norm_soc == "mtk":
+        # MTK template must have _ab partition names
+        if "_ab" not in content.lower():
+            errors.append(
+                "windows_install_and_format_data.bat: MTK template must contain _ab partition names"
+            )
+        # Must not contain Snapdragon-style _a/_b dual-slot suffixes
+        if re.search(r'flash\s+\w+_[ab]\s+images\\', content, re.IGNORECASE):
+            errors.append(
+                "windows_install_and_format_data.bat: MTK template must not use Snapdragon _a/_b slot pattern"
+            )
+    else:
+        # Snapdragon template must not have _ab partition names
+        if re.search(r'flash\s+\w+_ab\s+images\\', content, re.IGNORECASE):
+            errors.append(
+                "windows_install_and_format_data.bat: Snapdragon template must not use MTK _ab partition names"
+            )
+
+    # Exactly one such file must exist at root (ZIP validation checks this too)
+    return errors
+
+
+def _write_template_report(
+    norm_soc: str,
+    raw_soc: str,
+    template_dir: Path,
+    staging: Path,
+    template_files: list[str],
+    copied_imgs: list[str],
+    placeholders_replaced: list[str],
+    zip_path: Path,
+    validation_result: str,
+) -> None:
+    """Write output/reports/final_zip_template_report.txt."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    zip_manifest: list[str] = []
+    if zip_path.is_file():
+        with zipfile.ZipFile(zip_path) as zf:
+            zip_manifest = sorted(zf.namelist())
+
+    lines = [
+        "MEZO Final ZIP Template Report",
+        "=" * 40,
+        f"Generated:            {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "",
+        f"Selected SoC (raw):   {raw_soc}",
+        f"Normalized SoC:       {norm_soc}",
+        f"Selected template:    {template_dir}",
+        f"Final staging path:   {staging}",
+        "",
+        f"Template files copied ({len(template_files)}):",
+    ]
+    for f in template_files:
+        lines.append(f"  {f}")
+
+    lines += [
+        "",
+        f"Real images copied ({len(copied_imgs)}):",
+    ]
+    for img in sorted(copied_imgs):
+        lines.append(f"  {img}")
+
+    lines += [
+        "",
+        f"Placeholders replaced in windows_install_and_format_data.bat ({len(placeholders_replaced)}):",
+    ]
+    for ph in placeholders_replaced:
+        lines.append(f"  {ph}")
+
+    lines += [
+        "",
+        f"Generated final ZIP:  {zip_path}",
+        "",
+        f"Final ZIP manifest ({len(zip_manifest)} entries):",
+    ]
+    for entry in zip_manifest:
+        lines.append(f"  {entry}")
+
+    lines += [
+        "",
+        f"Validation result:    {validation_result}",
+    ]
+
+    (REPORTS_DIR / "final_zip_template_report.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    print(f"[PACKAGE] Template report → {REPORTS_DIR / 'final_zip_template_report.txt'}")
+
+
 # ── Validation ────────────────────────────────────────────────────────────────
 
 def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
@@ -662,6 +802,17 @@ def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
             errors.append("images/super.img missing from ZIP")
         if not any(n.lower().endswith(".sh") or n.lower().endswith(".bat") for n in names):
             errors.append("No flash scripts (.sh/.bat) found at ZIP root")
+
+        # Exactly one windows_install_and_format_data.bat at root
+        root_install_bats = [
+            n for n in names
+            if "/" not in n and n.lower() == "windows_install_and_format_data.bat"
+        ]
+        if len(root_install_bats) != 1:
+            errors.append(
+                f"Expected exactly one windows_install_and_format_data.bat at ZIP root, "
+                f"found {len(root_install_bats)}"
+            )
 
         # Validate every images\xxx.img reference in BAT scripts exists in the ZIP
         for n in names:
@@ -982,41 +1133,41 @@ def package() -> Path:
         for w in cfg["warnings"]:
             print(f"[PACKAGE] WARN: {w}", file=sys.stderr)
 
+    # ── SoC normalization and template selection ──────────────────────────────
+    raw_soc = cfg.get("soc_family", "mtk")
+    try:
+        norm_soc = _normalize_soc(raw_soc)
+    except ValueError as exc:
+        print(f"[PACKAGE] ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    active_flash_map = MTK_FLASH_MAP if norm_soc == "mtk" else SD_FLASH_MAP
+    print(f"[PACKAGE] SoC: {norm_soc.upper()} — using {'MTK _ab' if norm_soc == 'mtk' else 'Snapdragon base'} partition names")
+
+    try:
+        template_dir = _select_template_dir(norm_soc)
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"[PACKAGE] ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"[PACKAGE] Template: {template_dir}")
+
     # ── Prepare staging directory ─────────────────────────────────────────────
     staging = STAGING_BASE
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    # ── Extract template RAR — required ───────────────────────────────────────
-    if not TEMPLATE_RAR.is_file():
-        print(f"[PACKAGE] ERROR: Template RAR not found: {TEMPLATE_RAR}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"[PACKAGE] Extracting template: {TEMPLATE_RAR}")
-    template_used = _extract_rar(TEMPLATE_RAR, staging)
-    if not template_used:
-        print("[PACKAGE] ERROR: RAR extraction failed — unrar, 7z, or bsdtar required", file=sys.stderr)
-        sys.exit(1)
-
-    nested_root = _flatten_template(staging)
-
-    # ── Verify template: bin/ + Linux/macOS scripts ───────────────────────────
-    # Windows scripts are generated; only Linux/macOS scripts must come from template.
-    missing_template = [s for s in _TEMPLATE_SCRIPTS if not (staging / s).is_file()]
-    bin_ok = (staging / "bin").is_dir()
-    if missing_template or not bin_ok:
-        print("[PACKAGE] ERROR: Template extraction incomplete!", file=sys.stderr)
-        if not bin_ok:
-            print("  bin/ directory missing from template", file=sys.stderr)
-        for s in missing_template:
-            print(f"  Missing template script: {s}", file=sys.stderr)
-        sys.exit(1)
+    # ── Copy SoC-specific template into staging ───────────────────────────────
+    template_files_copied = _copy_template_to_staging(template_dir, staging)
+    template_used      = True
     template_preserved = True
-    print(f"[PACKAGE] Template verified: bin/ present, {len(_TEMPLATE_SCRIPTS)} Linux/macOS scripts intact")
+    nested_root        = None
+    print(f"[PACKAGE] Copied {len(template_files_copied)} template files from bin/final_zip_templates/{norm_soc}/")
 
-    # ── images/ directory ─────────────────────────────────────────────────────
+    # ── images/ directory — clear placeholders, prepare for real images ────────
     img_dir = staging / "images"
+    if img_dir.is_dir():
+        for _placeholder in img_dir.glob("*.img"):
+            _placeholder.unlink()
     img_dir.mkdir(exist_ok=True)
 
     copied_imgs: list[str] = []
@@ -1051,11 +1202,6 @@ def package() -> Path:
     print(f"[PACKAGE] Images collected: {len(copied_imgs)} files")
     print(f"  {', '.join(copied_imgs[:8])}{'...' if len(copied_imgs) > 8 else ''}")
 
-    # ── SoC-specific flash map ────────────────────────────────────────────────
-    soc_family = cfg.get("soc_family", "mtk").lower()
-    active_flash_map = MTK_FLASH_MAP if soc_family == "mtk" else SD_FLASH_MAP
-    print(f"[PACKAGE] SoC: {soc_family.upper()} — using {'MTK _ab' if soc_family == 'mtk' else 'Snapdragon base'} partition names")
-
     # ── Validate required images ──────────────────────────────────────────────
     missing_required = sorted(req for req in REQUIRED_IMAGES if req not in available_imgs)
     if missing_required:
@@ -1064,9 +1210,27 @@ def package() -> Path:
             print(f"  ! {img}", file=sys.stderr)
         sys.exit(1)
 
-    # ── Generate Windows BAT scripts from actual images ───────────────────────
+    # ── Replace metadata placeholders in template windows_install_and_format_data.bat ──
+    region = _read("rom_os.txt") or "Global"
+    bat_replacements = {
+        "CN_VERSION_FROM_ROM":  rom_version or "UNKNOWN",
+        "DEVICE_FROM_ROM":      _sanitize_name(codename),
+        "ANDROID_FROM_ROM":     android_ver or "UNKNOWN",
+        "REGION_FROM_ROM":      region,
+        "DEVICE_LIST_FROM_ROM": _sanitize_name(codename),
+    }
+    placeholders_replaced = _replace_bat_placeholders(
+        staging / "windows_install_and_format_data.bat", bat_replacements
+    )
+    if placeholders_replaced:
+        print(
+            f"[PACKAGE] Replaced placeholders in windows_install_and_format_data.bat: "
+            f"{', '.join(placeholders_replaced)}"
+        )
+
+    # ── Generate remaining Windows BAT scripts from actual images ─────────────
     win_errors, win_warnings, unknown_imgs, flash_cmds = _gen_windows_scripts(
-        staging, img_dir, _sanitize_name(codename), rom_version, soc_family=soc_family
+        staging, img_dir, _sanitize_name(codename), rom_version, soc_family=norm_soc
     )
     if win_errors:
         print("[PACKAGE] Windows script generation ERRORS:", file=sys.stderr)
@@ -1078,29 +1242,28 @@ def package() -> Path:
 
     # ── Validate generated BAT scripts ────────────────────────────────────────
     bat_errors = _validate_generated_bat_scripts(
-        staging, available_imgs, soc_family=soc_family, flash_map=active_flash_map
+        staging, available_imgs, soc_family=norm_soc, flash_map=active_flash_map
     )
     if bat_errors:
         print("[PACKAGE] BAT script validation ERRORS:", file=sys.stderr)
         for e in bat_errors:
             print(f"  ! {e}", file=sys.stderr)
         sys.exit(1)
-    print(f"[PACKAGE] BAT validation: PASS ({soc_family.upper()} style)")
+    print(f"[PACKAGE] BAT validation: PASS ({norm_soc.upper()} style)")
 
-    # ── Validate Linux/macOS template scripts ─────────────────────────────────
-    tmpl_errors, tmpl_warnings = _validate_template_scripts(staging, img_dir)
-    if tmpl_errors:
-        print("[PACKAGE] Template script validation ERRORS:", file=sys.stderr)
-        for e in tmpl_errors:
+    # ── Validate template windows_install_and_format_data.bat ─────────────────
+    tpl_bat_errors = _validate_template_bat(staging, norm_soc)
+    if tpl_bat_errors:
+        print("[PACKAGE] Template BAT validation ERRORS:", file=sys.stderr)
+        for e in tpl_bat_errors:
             print(f"  ! {e}", file=sys.stderr)
         sys.exit(1)
-    for w in tmpl_warnings:
-        print(f"[PACKAGE] WARN: {w}", file=sys.stderr)
+    print("[PACKAGE] Template BAT validation: PASS")
 
     # ── Write flash scan report ───────────────────────────────────────────────
     _write_flash_scan_report(
         img_dir, available_imgs, flash_cmds, unknown_imgs, win_warnings, staging,
-        soc_family=soc_family, flash_map=active_flash_map,
+        soc_family=norm_soc, flash_map=active_flash_map,
     )
 
     # ── Create ZIP ────────────────────────────────────────────────────────────
@@ -1158,6 +1321,17 @@ def package() -> Path:
         nested_root=nested_root,
         uncompressed_bytes=uncompressed_bytes,
         zip_tool=zip_tool,
+    )
+    _write_template_report(
+        norm_soc=norm_soc,
+        raw_soc=raw_soc,
+        template_dir=template_dir,
+        staging=staging,
+        template_files=template_files_copied,
+        copied_imgs=copied_imgs,
+        placeholders_replaced=placeholders_replaced,
+        zip_path=zip_path,
+        validation_result="PASS",
     )
     _gen_pipeline_scan_report()
 
