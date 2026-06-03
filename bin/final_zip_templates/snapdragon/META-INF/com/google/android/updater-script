@@ -1,0 +1,65 @@
+ui_print("Your device: " + getprop("ro.product.device"));
+getprop("ro.product.device") == "tapas" || getprop("ro.product.device") == "topaz" || abort("Compatible devices: tapas, topaz");
+
+show_progress(0.200000, 0);
+ui_print("Flashing firmware partitions...");
+package_extract_file("images/abl.img", "/dev/block/bootdevice/by-name/abl_a");
+package_extract_file("images/abl.img", "/dev/block/bootdevice/by-name/abl_b");
+package_extract_file("images/bluetooth.img", "/dev/block/bootdevice/by-name/bluetooth_a");
+package_extract_file("images/bluetooth.img", "/dev/block/bootdevice/by-name/bluetooth_b");
+package_extract_file("images/devcfg.img", "/dev/block/bootdevice/by-name/devcfg_a");
+package_extract_file("images/devcfg.img", "/dev/block/bootdevice/by-name/devcfg_b");
+package_extract_file("images/dsp.img", "/dev/block/bootdevice/by-name/dsp_a");
+package_extract_file("images/dsp.img", "/dev/block/bootdevice/by-name/dsp_b");
+package_extract_file("images/dtbo.img", "/dev/block/bootdevice/by-name/dtbo_a");
+package_extract_file("images/dtbo.img", "/dev/block/bootdevice/by-name/dtbo_b");
+package_extract_file("images/featenabler.img", "/dev/block/bootdevice/by-name/featenabler_a");
+package_extract_file("images/featenabler.img", "/dev/block/bootdevice/by-name/featenabler_b");
+package_extract_file("images/hyp.img", "/dev/block/bootdevice/by-name/hyp_a");
+package_extract_file("images/hyp.img", "/dev/block/bootdevice/by-name/hyp_b");
+package_extract_file("images/imagefv.img", "/dev/block/bootdevice/by-name/imagefv_a");
+package_extract_file("images/imagefv.img", "/dev/block/bootdevice/by-name/imagefv_b");
+package_extract_file("images/keymaster.img", "/dev/block/bootdevice/by-name/keymaster_a");
+package_extract_file("images/keymaster.img", "/dev/block/bootdevice/by-name/keymaster_b");
+package_extract_file("images/modem.img", "/dev/block/bootdevice/by-name/modem_a");
+package_extract_file("images/modem.img", "/dev/block/bootdevice/by-name/modem_b");
+package_extract_file("images/qupfw.img", "/dev/block/bootdevice/by-name/qupfw_a");
+package_extract_file("images/qupfw.img", "/dev/block/bootdevice/by-name/qupfw_b");
+package_extract_file("images/rpm.img", "/dev/block/bootdevice/by-name/rpm_a");
+package_extract_file("images/rpm.img", "/dev/block/bootdevice/by-name/rpm_b");
+package_extract_file("images/tz.img", "/dev/block/bootdevice/by-name/tz_a");
+package_extract_file("images/tz.img", "/dev/block/bootdevice/by-name/tz_b");
+package_extract_file("images/uefisecapp.img", "/dev/block/bootdevice/by-name/uefisecapp_a");
+package_extract_file("images/uefisecapp.img", "/dev/block/bootdevice/by-name/uefisecapp_b");
+package_extract_file("images/vbmeta.img", "/dev/block/bootdevice/by-name/vbmeta_a");
+package_extract_file("images/vbmeta.img", "/dev/block/bootdevice/by-name/vbmeta_b");
+package_extract_file("images/vbmeta_system.img", "/dev/block/bootdevice/by-name/vbmeta_system_a");
+package_extract_file("images/vbmeta_system.img", "/dev/block/bootdevice/by-name/vbmeta_system_b");
+package_extract_file("images/xbl.img", "/dev/block/bootdevice/by-name/xbl_a");
+package_extract_file("images/xbl.img", "/dev/block/bootdevice/by-name/xbl_b");
+package_extract_file("images/xbl_config.img", "/dev/block/bootdevice/by-name/xbl_config_a");
+package_extract_file("images/xbl_config.img", "/dev/block/bootdevice/by-name/xbl_config_b");
+set_progress(1.000000);
+
+show_progress(0.100000, 0);
+ui_print("Flashing boot partitions...");
+package_extract_file("images/boot.img", "/dev/block/bootdevice/by-name/boot_a");
+package_extract_file("images/boot.img", "/dev/block/bootdevice/by-name/boot_b");
+package_extract_file("images/init_boot.img", "/dev/block/bootdevice/by-name/init_boot_a");
+package_extract_file("images/init_boot.img", "/dev/block/bootdevice/by-name/init_boot_b");
+package_extract_file("images/vendor_boot.img", "/dev/block/bootdevice/by-name/vendor_boot_a");
+package_extract_file("images/vendor_boot.img", "/dev/block/bootdevice/by-name/vendor_boot_b");
+set_progress(1.000000);
+
+show_progress(0.100000, 0);
+ui_print("Flashing cust partition...");
+package_unsparse_file("images/cust.img", "/dev/block/bootdevice/by-name/cust");
+set_progress(1.000000);
+
+show_progress(0.600000, 0);
+ui_print("Flashing super partition...");
+package_extract_file("images/super.img", "/dev/block/bootdevice/by-name/super");
+set_progress(1.000000);
+
+run_program("/system/bin/bootctl", "set-active-boot-slot", "0");
+run_program("/sbin/sh", "-c", "rm -f /data/cache/command");

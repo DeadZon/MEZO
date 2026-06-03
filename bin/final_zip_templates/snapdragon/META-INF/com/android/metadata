@@ -1,0 +1,10 @@
+ota-property-files=payload_metadata.bin:4795:195500,payload.bin:4795:4901739062,payload_properties.txt:4901743915:156,apex_info.pb:2357:1344,care_map.pb:3748:980,metadata:69:692,metadata.pb:829:1480                        
+ota-required-cache=0
+ota-streaming-property-files=payload.bin:4795:4901739062,payload_properties.txt:4901743915:156,apex_info.pb:2357:1344,care_map.pb:3748:980,metadata:69:692,metadata.pb:829:1480                          
+ota-type=AB
+post-build=Redmi/topaz_global/topaz:15/AQ3A.240829.003/OS2.0.204.0.VMGMIXM:user/release-keys
+post-build-incremental=OS2.0.204.0.VMGMIXM
+post-sdk-level=35
+post-security-patch-level=2026-02-01
+post-timestamp=1769753084
+pre-device=topaz
