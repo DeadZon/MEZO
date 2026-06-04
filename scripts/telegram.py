@@ -334,12 +334,17 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
     elif is_failed:
         out.append("📊 Status:  ❌ FAILED")
         out.append(f"⏱ Elapsed: {elapsed}")
-        failed = state.get("failed_stage", "")
-        err    = state.get("error_text", "")
+        failed   = state.get("failed_stage", "")
+        err      = state.get("error_text", "")
+        dbg_zip  = state.get("debug_zip_name", "")
         if failed:
-            out.append(f"📍 Failed Stage: {_STAGE_LABEL.get(failed, failed)}")
+            out.append(f"📍 Stage:  {_STAGE_LABEL.get(failed, failed)}")
         if err:
-            out.append(f"💥 Cause:  {err[:150]}")
+            # Show first meaningful error line clearly
+            first_err = next((ln for ln in err.splitlines() if ln.strip()), err)
+            out.append(f"💥 Reason: {first_err[:150]}")
+        if dbg_zip:
+            out.append(f"🗃 Debug:  {dbg_zip}")
         out.append(bar_line)
     else:
         out.append("📊 Status:  🟡 RUNNING")
@@ -562,6 +567,7 @@ def finish_build(
     final_zip_size_mib: float = 0.0,
     error_text: str = "",
     failed_stage: str = "",
+    debug_zip_name: str = "",
 ) -> None:
     """Push the final success or failure message."""
     state  = load_state()
@@ -572,6 +578,7 @@ def finish_build(
     if final_zip_size_mib: state["final_zip_size_mib"]   = final_zip_size_mib
     if error_text:         state["error_text"]           = error_text[:200]
     if failed_stage:       state["failed_stage"]         = failed_stage
+    if debug_zip_name:     state["debug_zip_name"]       = debug_zip_name
 
     if final in ("OK", "DONE"):
         # Mark every stage OK so progress shows 100% and all stages show ✅
@@ -620,22 +627,24 @@ def main() -> None:
         zip_mib      = 0.0
         error_text   = ""
         failed_stage = ""
+        debug_zip    = ""
         i = 1
         while i < len(rest):
             flag = rest[i]
             val  = rest[i + 1] if i + 1 < len(rest) else ""
-            if flag == "--url":           url = val;            i += 2
-            elif flag == "--zip":         zip_name = val;       i += 2
+            if flag == "--url":            url = val;            i += 2
+            elif flag == "--zip":          zip_name = val;       i += 2
             elif flag == "--size":
                 try: zip_mib = float(val)
                 except ValueError: pass
                 i += 2
-            elif flag == "--error":       error_text = val;     i += 2
-            elif flag == "--failed-stage": failed_stage = val;  i += 2
-            else:                         i += 1
+            elif flag == "--error":        error_text = val;     i += 2
+            elif flag == "--failed-stage": failed_stage = val;   i += 2
+            elif flag == "--debug-zip":    debug_zip = val;      i += 2
+            else:                          i += 1
         finish_build(status, upload_url=url, final_zip_name=zip_name,
                      final_zip_size_mib=zip_mib, error_text=error_text,
-                     failed_stage=failed_stage)
+                     failed_stage=failed_stage, debug_zip_name=debug_zip)
 
     else:
         print(f"[TELEGRAM] Unknown command: {cmd}", file=sys.stderr)

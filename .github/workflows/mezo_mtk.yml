@@ -235,6 +235,13 @@ jobs:
             --zip "${ZIP_NAME:-}" \
             --size "${ZIP_SIZE:-0}"
 
+      # ── Create failure debug ZIP ──────────────────────────────────────────
+      - name: Create failure debug ZIP
+        if: failure()
+        run: |
+          mkdir -p output/reports output/logs
+          sudo -E python3 scripts/debug_zip.py || true
+
       - name: Telegram - Failed
         if: ${{ inputs.notify_telegram && failure() }}
         run: |
@@ -242,8 +249,40 @@ jobs:
           if [ "${{ steps.pixeldrain_upload.outcome }}" = "failure" ]; then
             FAILED_STAGE="upload_pixeldrain"
           fi
+
+          ERROR_TEXT=""
+          if [ -f output/reports/package_error_report.txt ]; then
+            ERROR_TEXT=$(grep -m1 "^Reason:" output/reports/package_error_report.txt | sed 's/^Reason:[[:space:]]*//' | head -c 200 || true)
+          fi
+          if [ -z "$ERROR_TEXT" ] && [ -f /tmp/mezo_package.log ]; then
+            ERROR_TEXT=$(grep -i "error\|failed\|invalid" /tmp/mezo_package.log | tail -n3 | tr '\n' ' ' | head -c 200 || true)
+          fi
+          if [ -z "$ERROR_TEXT" ] && [ -f /tmp/mezo_pack.log ]; then
+            ERROR_TEXT=$(grep -i "error\|failed\|invalid" /tmp/mezo_pack.log | tail -n3 | tr '\n' ' ' | head -c 200 || true)
+          fi
+          if [ -z "$ERROR_TEXT" ] && [ -f /tmp/mezo_build.log ]; then
+            ERROR_TEXT=$(grep -i "error\|failed\|invalid" /tmp/mezo_build.log | tail -n3 | tr '\n' ' ' | head -c 200 || true)
+          fi
+
+          DEBUG_ZIP_NAME=""
+          if [ -f output/reports/build_failure_debug.zip ]; then
+            DEBUG_ZIP_NAME="build_failure_debug.zip (artifact: deadzone-failure-debug)"
+          fi
+
           sudo -E python3 scripts/telegram.py finish FAIL \
-            ${FAILED_STAGE:+--failed-stage "$FAILED_STAGE"}
+            ${FAILED_STAGE:+--failed-stage "$FAILED_STAGE"} \
+            ${ERROR_TEXT:+--error "$ERROR_TEXT"} \
+            ${DEBUG_ZIP_NAME:+--debug-zip "$DEBUG_ZIP_NAME"}
+
+      # ── Upload failure debug artifact ─────────────────────────────────────
+      - name: Upload failure debug artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadzone-failure-debug
+          path: output/reports/build_failure_debug.zip
+          if-no-files-found: warn
+          retention-days: 7
 
       # ── Cleanup ───────────────────────────────────────────────────────────
       - name: Cleanup workspace

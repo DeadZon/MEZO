@@ -36,6 +36,9 @@ import time
 import zipfile
 from pathlib import Path
 
+# ── Android sparse image magic ────────────────────────────────────────────────
+_SPARSE_MAGIC = bytes([0x3A, 0xFF, 0x26, 0xED])
+
 # ── Bootstrap: import device_resolver from same dir ──────────────────────────
 _spec = importlib.util.spec_from_file_location(
     "device_resolver", Path(__file__).parent / "device_resolver.py"
@@ -365,6 +368,195 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+# ── Image type detection ──────────────────────────────────────────────────────
+
+def _detect_image(path: Path) -> dict:
+    """Return {'type': 'SPARSE'|'RAW', 'size': int, 'magic': str} for an image file."""
+    if not path.is_file():
+        return {"type": "UNKNOWN", "size": 0, "magic": "????????"}
+    size = path.stat().st_size
+    if size < 4:
+        return {"type": "RAW", "size": size, "magic": "??"}
+    with path.open("rb") as fh:
+        header = fh.read(4)
+    magic_hex = header.hex()
+    img_type = "SPARSE" if header == _SPARSE_MAGIC else "RAW"
+    return {"type": img_type, "size": size, "magic": magic_hex}
+
+
+def _log_all_images(img_dir: Path) -> list[dict]:
+    """Log type/size/magic for every .img in img_dir and return the info list."""
+    results: list[dict] = []
+    for img_path in sorted(img_dir.glob("*.img")):
+        info = _detect_image(img_path)
+        print(f"[IMAGE] {img_path.name}: {info['type']}, size={info['size']}, magic={info['magic']}")
+        results.append({"name": img_path.name, **info})
+    return results
+
+
+def _write_image_type_report(images_info: list[dict]) -> None:
+    """Write output/reports/image_type_report.txt."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "Image Type Report",
+        "=" * 50,
+        f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "",
+        f"Images ({len(images_info)}):",
+    ]
+    for img in images_info:
+        lines.append(
+            f"  {img['name']:<38s} {img['type']:<8s} "
+            f"size={img['size']:>13,}  magic={img['magic']}"
+        )
+    (REPORTS_DIR / "image_type_report.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    print(f"[PACKAGE] Image type report → {REPORTS_DIR / 'image_type_report.txt'}")
+
+
+# ── Failure debug ZIP ─────────────────────────────────────────────────────────
+
+def _create_debug_zip() -> "Path | None":
+    """Collect all logs/reports into output/reports/build_failure_debug.zip."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    zip_path = REPORTS_DIR / "build_failure_debug.zip"
+    added: set[str] = set()
+
+    def _add(zf: zipfile.ZipFile, src: Path, arcname: str) -> None:
+        if arcname in added or not src.is_file():
+            return
+        try:
+            zf.write(src, arcname)
+            added.add(arcname)
+        except Exception as exc:
+            print(f"[DEBUG-ZIP] Skip {arcname}: {exc}", file=sys.stderr)
+
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+
+            # output/logs/**
+            logs_dir = WORK_DIR / "output" / "logs"
+            if logs_dir.is_dir():
+                for f in sorted(logs_dir.rglob("*")):
+                    if f.is_file() and f.suffix != ".img" and f.stat().st_size < 20 * 1024 * 1024:
+                        _add(zf, f, f"logs/{f.relative_to(logs_dir)}")
+
+            # output/reports/** (skip the ZIP itself and .img files)
+            if REPORTS_DIR.is_dir():
+                for f in sorted(REPORTS_DIR.glob("*")):
+                    if f == zip_path or f.suffix == ".img":
+                        continue
+                    if f.is_file() and f.stat().st_size < 20 * 1024 * 1024:
+                        _add(zf, f, f"reports/{f.name}")
+
+            # Named report files (belt-and-suspenders)
+            for rel in [
+                "output/logs/package_commands.log",
+                "output/reports/package_error_report.txt",
+                "output/reports/image_type_report.txt",
+                "output/reports/final_zip_template_report.txt",
+                "output/reports/snapdragon_flash_script_report.txt",
+                "output/reports/deadzone_style_report.txt",
+                "output/reports/device_resolve_report.txt",
+                "output/reports/final_zip_manifest.txt",
+                "output/reports/final_zip_summary.json",
+            ]:
+                _add(zf, WORK_DIR / rel, Path(rel).name)
+
+            _add(zf, WORK_DIR / "build_info.txt", "build_info.txt")
+
+            # Last 300 lines of /tmp build logs
+            for log_name in ["mezo_build.log", "mezo_pack.log", "mezo_package.log"]:
+                log_p = Path("/tmp") / log_name
+                if log_p.is_file():
+                    try:
+                        lines = log_p.read_text(encoding="utf-8", errors="replace").splitlines()
+                        arc   = f"build_log_tail_{log_name}"
+                        if arc not in added:
+                            zf.writestr(arc, "\n".join(lines[-300:]))
+                            added.add(arc)
+                    except Exception:
+                        pass
+
+            # build/baserom/images file list (metadata only — no .img content)
+            img_list_lines: list[str] = [
+                "Build images file list",
+                f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+                "=" * 60,
+            ]
+            if BUILD_IMAGES.is_dir():
+                for img in sorted(BUILD_IMAGES.glob("*")):
+                    if img.is_file():
+                        if img.suffix == ".img":
+                            info = _detect_image(img)
+                            img_list_lines.append(
+                                f"{img.name:<45s}  {info['type']:<8s}  "
+                                f"size={info['size']:>12,}  magic={info['magic']}"
+                            )
+                        else:
+                            img_list_lines.append(
+                                f"{img.name:<45s}  -         size={img.stat().st_size:>12,}"
+                            )
+            if "build_images_list.txt" not in added:
+                zf.writestr("build_images_list.txt", "\n".join(img_list_lines))
+                added.add("build_images_list.txt")
+
+            # Staging artifacts (BAT and firmware.txt only — no large .img)
+            staging_img_dir = STAGING_BASE / "images"
+            _add(zf, STAGING_BASE / "windows_install_and_format_data.bat",
+                 "staging_windows_install_and_format_data.bat")
+            _add(zf, staging_img_dir / "DeadZone_firmware.txt",
+                 "staging_images_DeadZone_firmware.txt")
+
+            # Staging images list (metadata only)
+            if staging_img_dir.is_dir():
+                st_list: list[str] = ["Staging images file list", "=" * 60]
+                for img in sorted(staging_img_dir.glob("*.img")):
+                    info = _detect_image(img)
+                    st_list.append(
+                        f"{img.name:<45s}  {info['type']:<8s}  "
+                        f"size={info['size']:>12,}  magic={info['magic']}"
+                    )
+                if "staging_images_list.txt" not in added:
+                    zf.writestr("staging_images_list.txt", "\n".join(st_list))
+                    added.add("staging_images_list.txt")
+
+        size_kb = zip_path.stat().st_size // 1024
+        print(f"[DEBUG-ZIP] Created: {zip_path}  ({size_kb} KB, {len(added)} entries)")
+        return zip_path
+
+    except Exception as exc:
+        print(f"[DEBUG-ZIP] Failed to create debug ZIP: {exc}", file=sys.stderr)
+        return None
+
+
+def _write_package_error_report(
+    stage: str,
+    command: str = "",
+    image: str = "",
+    reason: str = "",
+    debug_zip: str = "",
+) -> None:
+    """Write output/reports/package_error_report.txt with structured failure info."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "PACKAGE ERROR REPORT",
+        "=" * 50,
+        f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "",
+        f"Stage:     {stage}",
+        f"Command:   {command or '(none)'}",
+        f"Image:     {image or '(none)'}",
+        f"Reason:    {reason or '(unknown)'}",
+        f"Debug ZIP: {debug_zip or '(not created)'}",
+    ]
+    (REPORTS_DIR / "package_error_report.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    print(f"[PACKAGE] Error report → {REPORTS_DIR / 'package_error_report.txt'}")
 
 
 def _extract_rar(rar: Path, dest: Path) -> bool:
@@ -2019,14 +2211,24 @@ def package() -> Path:
     # super.img — must exist (created by packROM.sh)
     super_src = BUILD_IMAGES / "super.img"
     if super_src.is_file():
+        super_info = _detect_image(super_src)
+        print(
+            f"[IMAGE] super.img: {super_info['type']}, "
+            f"size={super_info['size']}, magic={super_info['magic']}"
+        )
         shutil.copy2(super_src, img_dir / "super.img")
         copied_imgs.append("super.img")
         print(f"[PACKAGE] Copied super.img ({super_src.stat().st_size / 1024**2:.0f} MiB)")
     else:
+        _write_package_error_report(
+            stage="package:copy-images",
+            image="super.img",
+            reason="build/baserom/images/super.img not found — packROM.sh must create it before package_rom.py runs",
+        )
         print("[PACKAGE] ERROR: build/baserom/images/super.img not found!", file=sys.stderr)
         sys.exit(1)
 
-    # Other .img files
+    # Other .img files — copy with sparse/raw detection logging
     src_dirs = [BUILD_IMAGES]
     if baserom_type == "br" and BUILD_FW.is_dir():
         src_dirs.append(BUILD_FW)
@@ -2039,6 +2241,11 @@ def package() -> Path:
                 continue
             if img.name.endswith(".zst"):
                 continue
+            img_info = _detect_image(img)
+            print(
+                f"[IMAGE] {img.name}: {img_info['type']}, "
+                f"size={img_info['size']}, magic={img_info['magic']}"
+            )
             shutil.copy2(img, img_dir / img.name)
             copied_imgs.append(img.name)
 
@@ -2046,9 +2253,17 @@ def package() -> Path:
     print(f"[PACKAGE] Images collected: {len(copied_imgs)} files")
     print(f"  {', '.join(copied_imgs[:8])}{'...' if len(copied_imgs) > 8 else ''}")
 
+    # ── Image type report (all images in staging) ─────────────────────────────
+    images_info = _log_all_images(img_dir)
+    _write_image_type_report(images_info)
+
     # ── Validate required images ──────────────────────────────────────────────
     missing_required = sorted(req for req in REQUIRED_IMAGES if req not in available_imgs)
     if missing_required:
+        _write_package_error_report(
+            stage="package:validate-images",
+            reason=f"Required images missing: {', '.join(missing_required)}",
+        )
         print("[PACKAGE] ERROR: Required images missing:", file=sys.stderr)
         for img in missing_required:
             print(f"  ! {img}", file=sys.stderr)
@@ -2209,7 +2424,30 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.parse_args()
-    package()
+    try:
+        package()
+    except SystemExit as exc:
+        if exc.code and exc.code != 0:
+            try:
+                dbg = _create_debug_zip()
+                if dbg:
+                    print(f"[DEBUG-ZIP] Failure debug ZIP: {dbg}", file=sys.stderr)
+            except Exception as zip_exc:
+                print(f"[DEBUG-ZIP] Could not create debug ZIP: {zip_exc}", file=sys.stderr)
+        raise
+    except Exception as exc:
+        print(f"[PACKAGE] Fatal unexpected error: {exc}", file=sys.stderr)
+        try:
+            _write_package_error_report(
+                stage="package:unexpected",
+                reason=str(exc),
+            )
+            dbg = _create_debug_zip()
+            if dbg:
+                print(f"[DEBUG-ZIP] Failure debug ZIP: {dbg}", file=sys.stderr)
+        except Exception:
+            pass
+        sys.exit(1)
 
 
 if __name__ == "__main__":

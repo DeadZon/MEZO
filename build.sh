@@ -62,13 +62,27 @@ elif [[ ${baserom_type} == 'br' ]];then
 elif [[ ${is_base_rom_eu} == true ]];then
     unpack "Extracting files from BASETROM [super.img]"
     unzip ${baserom} 'images/*' -d build/baserom >  /dev/null 2>&1 ||error "Extracting [super.img] error"
-    unpack "Merging super.img.* into super.img"
-    simg2img build/baserom/images/super.img.* build/baserom/images/super.img
+    unpack "Merging super.img.* into super.img (detecting sparse/raw)"
+    _super_chunks=$(ls build/baserom/images/super.img.* 2>/dev/null | sort)
+    if [ -z "$_super_chunks" ]; then
+        error "No super.img.* chunks found after unzip!"
+        exit 1
+    fi
+    python3 scripts/image_utils.py merge \
+        --dst build/baserom/images/super.img \
+        --simg2img "$(pwd)/bin/Linux/x86_64/simg2img" \
+        $_super_chunks \
+        || { error "super.img merge failed — see [IMAGE] lines above for sparse/raw details"; exit 1; }
     rm -rf build/baserom/images/super.img.*
     mv build/baserom/images/super.img build/baserom/super.img
     unpack "[super.img] extracted."
     if [[ -f build/baserom/images/cust.img.0 ]];then
-        simg2img build/baserom/images/cust.img.* build/baserom/images/cust.img
+        _cust_chunks=$(ls build/baserom/images/cust.img.* 2>/dev/null | sort)
+        python3 scripts/image_utils.py merge \
+            --dst build/baserom/images/cust.img \
+            --simg2img "$(pwd)/bin/Linux/x86_64/simg2img" \
+            $_cust_chunks \
+            || { error "cust.img merge failed — see [IMAGE] lines above for details"; exit 1; }
         rm -rf build/baserom/images/cust.img.*
     fi
 fi
