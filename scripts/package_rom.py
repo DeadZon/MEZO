@@ -6,7 +6,7 @@ Replaces old uploadROM.sh packaging.
 - Resolves device config via device_resolver
 - Selects SoC-specific full template from bin/final_zip_templates/<soc>/
 - Generates windows_install_and_format_data.bat dynamically from actual ROM images
-- Flash commands use MTK _ab style or Snapdragon _a/_b style based on SoC
+- Flash commands use MTK _ab style or Snapdragon _ab style (garnet reference) based on SoC
 - Final ZIP contains exactly one root BAT: windows_install_and_format_data.bat
 - Copies .img files from build output into images/
 - Validates scripts, images, and ZIP before finalising
@@ -68,12 +68,15 @@ OPTIONAL_IMGS = [
     "gz.img", "lk.img", "mcf_ota.img", "mcupm.img", "md1img.img",
     "mvpu_algo.img", "pi_img.img", "scp.img", "spmfw.img", "sspm.img",
     "tee.img", "vcp.img", "preloader_raw.img",
-    # Snapdragon firmware — garnet reference + common variants
+    # Snapdragon firmware — garnet reference + extended list
     "abl.img", "aop.img", "aop_config.img", "bluetooth.img",
-    "cpucp.img", "devcfg.img", "dsp.img",
-    "featenabler.img", "hyp.img", "imagefv.img", "keymaster.img",
-    "modem.img", "qupfw.img", "rpm.img", "shrm.img",
-    "tz.img", "uefi.img", "uefisecapp.img",
+    "countrycode.img", "cpucp.img", "cpucp_dtb.img",
+    "devcfg.img", "dsp.img",
+    "featenabler.img", "hyp.img", "idmanager.img", "imagefv.img", "keymaster.img",
+    "modem.img", "multiimgqti.img", "pdp.img", "pdp_cdb.img", "pvmfw.img",
+    "qupfw.img", "rpm.img", "shrm.img",
+    "soccp_dcd.img", "soccp_debug.img", "spuservice.img",
+    "tz.img", "uefi.img", "uefisecapp.img", "vm-bootsys.img",
     "xbl.img", "xbl_config.img", "xbl_ramdump.img",
     "recovery.img",
 ]
@@ -160,25 +163,36 @@ MTK_FLASH_ORDER: list[str] = [
 # Non-slot images (SD_NONSLOT_IMGS) flash once without suffix.
 # Filename stem is never split on underscores — xbl_config.img → xbl_config_ab.
 SD_FLASH_MAP: dict[str, str] = {
-    # Firmware (slotted) — garnet reference order
+    # Firmware (slotted) — garnet reference order + extended list
     "abl.img":            "abl_ab",
     "aop.img":            "aop_ab",
     "aop_config.img":     "aop_config_ab",
     "bluetooth.img":      "bluetooth_ab",
+    "countrycode.img":    "countrycode_ab",
     "cpucp.img":          "cpucp_ab",
+    "cpucp_dtb.img":      "cpucp_dtb_ab",
     "devcfg.img":         "devcfg_ab",
     "dsp.img":            "dsp_ab",
     "dtbo.img":           "dtbo_ab",
     "featenabler.img":    "featenabler_ab",
     "hyp.img":            "hyp_ab",
+    "idmanager.img":      "idmanager_ab",
     "imagefv.img":        "imagefv_ab",
     "keymaster.img":      "keymaster_ab",
     "modem.img":          "modem_ab",
+    "multiimgqti.img":    "multiimgqti_ab",
+    "pdp.img":            "pdp_ab",
+    "pdp_cdb.img":        "pdp_cdb_ab",
+    "pvmfw.img":          "pvmfw_ab",
     "qupfw.img":          "qupfw_ab",
     "shrm.img":           "shrm_ab",
+    "soccp_dcd.img":      "soccp_dcd_ab",
+    "soccp_debug.img":    "soccp_debug_ab",
+    "spuservice.img":     "spuservice_ab",
     "tz.img":             "tz_ab",
     "uefi.img":           "uefi_ab",
     "uefisecapp.img":     "uefisecapp_ab",
+    "vm-bootsys.img":     "vm-bootsys_ab",
     # vbmeta (slotted)
     "vbmeta.img":         "vbmeta_ab",
     "vbmeta_system.img":  "vbmeta_system_ab",
@@ -206,25 +220,36 @@ SD_FLASH_MAP: dict[str, str] = {
 # Flash order: garnet reference script order first, then extras.
 # set_active a runs before all flash commands (in BAT generation).
 SD_FLASH_ORDER: list[str] = [
-    # Firmware — garnet reference order
+    # Firmware — garnet reference order + extended
     "abl.img",
     "aop.img",
     "aop_config.img",
     "bluetooth.img",
+    "countrycode.img",
     "cpucp.img",
+    "cpucp_dtb.img",
     "devcfg.img",
     "dsp.img",
     "dtbo.img",
     "featenabler.img",
     "hyp.img",
+    "idmanager.img",
     "imagefv.img",
     "keymaster.img",
     "modem.img",
+    "multiimgqti.img",
+    "pdp.img",
+    "pdp_cdb.img",
+    "pvmfw.img",
     "qupfw.img",
     "shrm.img",
+    "soccp_dcd.img",
+    "soccp_debug.img",
+    "spuservice.img",
     "tz.img",
     "uefi.img",
     "uefisecapp.img",
+    "vm-bootsys.img",
     # vbmeta
     "vbmeta.img",
     "vbmeta_system.img",
@@ -501,7 +526,7 @@ def _gen_windows_scripts(
     else:
         flash_map   = SD_FLASH_MAP
         flash_order = SD_FLASH_ORDER
-        style_label = "Snapdragon (base partitions)"
+        style_label = "Snapdragon (_ab garnet reference)"
 
     print(f"[PACKAGE] BAT style: {style_label}")
 
@@ -668,16 +693,19 @@ def _validate_generated_bat_scripts(
                         f"{sname}: {img} flashed as '{part}' — expected '{expected}' for MTK"
                     )
 
-        # Snapdragon-specific: no _ab suffix
+        # Snapdragon: must use _ab partition style (garnet reference).
+        # Slot images must end in _ab; base-name-only flash is wrong for Snapdragon.
         if not is_mtk:
-            for m in re.finditer(
-                r'%fastboot%\s+flash\s+(\S+_ab)\s+"images\\([^"]+\.img)"',
-                content, re.IGNORECASE
-            ):
-                part, img = m.group(1), m.group(2)
-                errors.append(
-                    f"{sname}: Snapdragon script must not use '_ab' partition '{part}' for {img}"
+            for bad_base in ("boot", "vendor_boot", "init_boot", "vbmeta",
+                             "vbmeta_system", "xbl_config", "abl", "modem"):
+                bad_pat = re.compile(
+                    r'%fastboot%\s+flash\s+' + re.escape(bad_base) + r'\s+"images\\',
+                    re.IGNORECASE,
                 )
+                if bad_pat.search(content):
+                    errors.append(
+                        f"{sname}: Snapdragon flashes '{bad_base}' as base name — must use '{bad_base}_ab'"
+                    )
 
     return errors
 
@@ -1924,7 +1952,7 @@ def package() -> Path:
         print(f"[PACKAGE] ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
     active_flash_map = MTK_FLASH_MAP if norm_soc == "mtk" else SD_FLASH_MAP
-    print(f"[PACKAGE] SoC: {norm_soc.upper()} — using {'MTK _ab' if norm_soc == 'mtk' else 'Snapdragon base'} partition names")
+    print(f"[PACKAGE] SoC: {norm_soc.upper()} — using {'MTK _ab' if norm_soc == 'mtk' else 'garnet reference _ab'} partition style")
 
     try:
         template_dir = _select_template_dir(norm_soc)
