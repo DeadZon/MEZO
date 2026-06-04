@@ -68,6 +68,11 @@ OPTIONAL_IMGS = [
     "gz.img", "lk.img", "mcf_ota.img", "mcupm.img", "md1img.img",
     "mvpu_algo.img", "pi_img.img", "scp.img", "spmfw.img", "sspm.img",
     "tee.img", "vcp.img", "preloader_raw.img",
+    # Snapdragon firmware (from uploaded full-flash package)
+    "abl.img", "bluetooth.img", "devcfg.img", "dsp.img",
+    "featenabler.img", "hyp.img", "imagefv.img", "keymaster.img",
+    "modem.img", "qupfw.img", "rpm.img", "tz.img", "uefisecapp.img",
+    "xbl.img", "xbl_config.img",
 ]
 
 # ── SoC-specific flash maps ───────────────────────────────────────────────────
@@ -147,36 +152,81 @@ MTK_FLASH_ORDER: list[str] = [
     "super.img",
 ]
 
-# Snapdragon: base partition names (flash to active slot; fastboot handles slotting)
+# Snapdragon: base partition names.
+# Slot images are flashed to both _a and _b by _compute_flash_pairs().
+# Non-slot images (SD_NONSLOT_IMGS) are flashed once without suffix.
+# Order matches the uploaded Snapdragon full-flash package.
 SD_FLASH_MAP: dict[str, str] = {
+    # Firmware (slotted) — from uploaded Snapdragon package
+    "abl.img":           "abl",
+    "bluetooth.img":     "bluetooth",
+    "devcfg.img":        "devcfg",
+    "dsp.img":           "dsp",
+    "dtbo.img":          "dtbo",
+    "featenabler.img":   "featenabler",
+    "hyp.img":           "hyp",
+    "imagefv.img":       "imagefv",
+    "keymaster.img":     "keymaster",
+    "modem.img":         "modem",
+    "qupfw.img":         "qupfw",
+    "rpm.img":           "rpm",
+    "tz.img":            "tz",
+    "uefisecapp.img":    "uefisecapp",
+    "xbl.img":           "xbl",
+    "xbl_config.img":    "xbl_config",
+    # OS images (slotted)
     "boot.img":           "boot",
-    "cust.img":           "cust",
-    "dtbo.img":           "dtbo",
     "init_boot.img":      "init_boot",
-    "logo.img":           "logo",
-    "rescue.img":         "rescue",
-    "super.img":          "super",
+    "vendor_boot.img":    "vendor_boot",
+    # vbmeta (slotted)
     "vbmeta.img":         "vbmeta",
-    "vbmeta_odm.img":     "vbmeta_odm",
-    "vbmeta_product.img": "vbmeta_product",
     "vbmeta_system.img":  "vbmeta_system",
     "vbmeta_vendor.img":  "vbmeta_vendor",
-    "vendor_boot.img":    "vendor_boot",
+    "vbmeta_odm.img":     "vbmeta_odm",
+    "vbmeta_product.img": "vbmeta_product",
+    # Non-slot (see SD_NONSLOT_IMGS)
+    "cust.img":           "cust",
+    "super.img":          "super",
+    # Optional extras
+    "logo.img":           "logo",
+    "rescue.img":         "rescue",
 }
 
+# Flash order matches the uploaded Snapdragon full-flash package order exactly.
 SD_FLASH_ORDER: list[str] = [
+    # Firmware first
+    "abl.img",
+    "bluetooth.img",
+    "devcfg.img",
+    "dsp.img",
+    "dtbo.img",
+    "featenabler.img",
+    "hyp.img",
+    "imagefv.img",
+    "keymaster.img",
+    "modem.img",
+    "qupfw.img",
+    "rpm.img",
+    "tz.img",
+    "uefisecapp.img",
+    # vbmeta before boot
+    "vbmeta.img",
+    "vbmeta_system.img",
+    "vbmeta_vendor.img",
+    "vbmeta_odm.img",
+    "vbmeta_product.img",
+    # XBL before boot
+    "xbl.img",
+    "xbl_config.img",
+    # OS images
     "boot.img",
     "init_boot.img",
     "vendor_boot.img",
-    "dtbo.img",
+    # Extras before super
     "logo.img",
     "cust.img",
     "rescue.img",
-    "vbmeta_system.img",
-    "vbmeta_vendor.img",
-    "vbmeta_product.img",
-    "vbmeta_odm.img",
-    "vbmeta.img",
+    # Super last
     "super.img",
 ]
 
@@ -245,7 +295,9 @@ _BAT_PLACEHOLDERS = frozenset({
     "DEVICE_FROM_ROM",
     "ANDROID_FROM_ROM",
     "REGION_FROM_ROM",
+    "REGION_FROM_ROM",
     "DEVICE_LIST_FROM_ROM",
+    "TIER_FROM_ROM",          # Snapdragon: ROM_LICENSE placeholder
 })
 
 _REQUIRED_SCRIPTS = _TEMPLATE_SCRIPTS  # only the template BAT matters now
@@ -870,6 +922,34 @@ def _gen_install_bat(
         )
         compat_line = f'set "COMPATIBLE_DEVICES={codename}"\n'
 
+    # Snapdragon uses META-INF\windows\fastboot.exe (full-flash package layout).
+    # MTK uses bin\windows\fastboot.exe (standard layout).
+    if norm_soc == "snapdragon":
+        fastboot_path = "META-INF\\windows\\fastboot.exe"
+        soc_line      = f'set "ROM_SOC=Snapdragon"\n'
+        firmware_block = (
+            'if exist "images\\DeadZone_firmware.txt" (\n'
+            '    echo  [INFO] ROM Firmware Information:\n'
+            '    type "images\\DeadZone_firmware.txt"\n'
+            '    echo.\n'
+            ')\n'
+        )
+        main_header = (
+            f'echo ================================================================\n'
+            f'echo              DEADZONE TEAM  ^|  by MEZO\n'
+            f'echo          Based on China Firmware - Snapdragon ROM\n'
+            f'echo ================================================================\n'
+        )
+    else:
+        fastboot_path = "bin\\windows\\fastboot.exe"
+        soc_line      = ""
+        firmware_block = ""
+        main_header = (
+            f'echo ================================================================\n'
+            f'echo            {header_label}\n'
+            f'echo ================================================================\n'
+        )
+
     content = (
         f'@echo off\n'
         f'chcp 65001 >nul\n'
@@ -878,7 +958,7 @@ def _gen_install_bat(
         f'title {title}\n'
         f'cls\n'
         f'\n'
-        f'set "fastboot=bin\\windows\\fastboot.exe"\n'
+        f'set "fastboot={fastboot_path}"\n'
         f'set "ROM_STYLE={style_name}"\n'
         f'set "ROM_LICENSE={style_tier}"\n'
         f'set "ROM_DEVELOPER=MEZO"\n'
@@ -886,6 +966,7 @@ def _gen_install_bat(
         f'set "ROM_DEVICE={codename}"\n'
         f'set "ROM_ANDROID={android_ver}"\n'
         f'set "ROM_REGION={region}"\n'
+        f'{soc_line}'
         f'{compat_line}'
         f'\n'
         f'if not exist "%fastboot%" (\n'
@@ -895,9 +976,7 @@ def _gen_install_bat(
         f')\n'
         f'\n'
         f'echo.\n'
-        f'echo ================================================================\n'
-        f'echo            {header_label}\n'
-        f'echo ================================================================\n'
+        f'{main_header}'
         f'echo.\n'
         f'echo  [ROM] Style      : %ROM_STYLE%\n'
         f'echo  [ROM] License    : %ROM_LICENSE%\n'
@@ -906,9 +985,11 @@ def _gen_install_bat(
         f'echo  [ROM] Device     : %ROM_DEVICE%\n'
         f'echo  [ROM] Android    : Android %ROM_ANDROID%\n'
         f'echo  [ROM] Region     : %ROM_REGION%\n'
+        f'{"echo  [ROM] SoC        : Snapdragon\n" if norm_soc == "snapdragon" else ""}'
         f'echo.\n'
         f'echo ================================================================\n'
         f'echo.\n'
+        f'{firmware_block}'
         f'echo  [i] Read this information before flashing:\n'
         f'echo.\n'
         f'echo  1. DeadZone ROM requires an UNLOCKED bootloader.\n'
@@ -969,13 +1050,26 @@ def _normalize_soc(soc: str) -> str:
 def _select_template_dir(norm_soc: str) -> Path:
     """Return the validated template path for the given normalized SoC.
 
-    Fails hard if the directory, fastboot.exe, or install BAT is missing.
+    MTK template:        fastboot at bin/windows/fastboot.exe
+    Snapdragon template: fastboot at META-INF/windows/fastboot.exe (full flash package)
     """
     tpl = FINAL_ZIP_TEMPLATES_DIR / norm_soc
     if not tpl.is_dir():
         raise FileNotFoundError(f"Template folder missing: {tpl}")
-    if not (tpl / "bin" / "windows" / "fastboot.exe").is_file():
-        raise FileNotFoundError(f"Required template file missing: {tpl}/bin/windows/fastboot.exe")
+
+    if norm_soc == "snapdragon":
+        fb = tpl / "META-INF" / "windows" / "fastboot.exe"
+        if not fb.is_file():
+            raise FileNotFoundError(
+                f"Required template file missing: {tpl}/META-INF/windows/fastboot.exe"
+            )
+    else:
+        fb = tpl / "bin" / "windows" / "fastboot.exe"
+        if not fb.is_file():
+            raise FileNotFoundError(
+                f"Required template file missing: {tpl}/bin/windows/fastboot.exe"
+            )
+
     if not (tpl / "windows_install_and_format_data.bat").is_file():
         raise FileNotFoundError(
             f"Required template file missing: {tpl}/windows_install_and_format_data.bat"
@@ -1037,24 +1131,49 @@ def _validate_template_bat(staging: Path, norm_soc: str) -> list[str]:
         errors.append("windows_install_and_format_data.bat: no fastboot reference found")
 
     if norm_soc == "mtk":
-        # MTK template must have _ab partition names
+        # MTK: must use _ab partition names
         if "_ab" not in content.lower():
             errors.append(
                 "windows_install_and_format_data.bat: MTK template must contain _ab partition names"
             )
-        # Must not contain Snapdragon-style _a/_b dual-slot suffixes
+        # MTK: must not use Snapdragon _a/_b dual-slot pattern
         if re.search(r'flash\s+\w+_[ab]\s+images\\', content, re.IGNORECASE):
             errors.append(
                 "windows_install_and_format_data.bat: MTK template must not use Snapdragon _a/_b slot pattern"
             )
     else:
-        # Snapdragon template must not have _ab partition names
+        # Snapdragon: must NOT have MTK _ab partition names
         if re.search(r'flash\s+\w+_ab\s+images\\', content, re.IGNORECASE):
             errors.append(
                 "windows_install_and_format_data.bat: Snapdragon template must not use MTK _ab partition names"
             )
+        # Snapdragon: must use META-INF\windows\fastboot.exe (not bin\windows)
+        if "META-INF\\windows\\fastboot.exe" not in content and \
+           "META-INF/windows/fastboot.exe" not in content:
+            errors.append(
+                "windows_install_and_format_data.bat: Snapdragon must use META-INF\\windows\\fastboot.exe"
+            )
+        # Snapdragon: must reference DeadZone_firmware.txt
+        if "DeadZone_firmware.txt" not in content:
+            errors.append(
+                "windows_install_and_format_data.bat: Snapdragon must reference images\\DeadZone_firmware.txt"
+            )
+        # Snapdragon: must not contain HyperUR branding
+        if "hyperur" in content.lower():
+            errors.append(
+                "windows_install_and_format_data.bat: must not contain HyperUR branding"
+            )
+        # Snapdragon: must contain DEADZONE or DeadZone
+        if "deadzone" not in content.lower():
+            errors.append(
+                "windows_install_and_format_data.bat: must contain DeadZone branding"
+            )
+        # Snapdragon: must contain MEZO
+        if "mezo" not in content.lower():
+            errors.append(
+                "windows_install_and_format_data.bat: must contain MEZO developer reference"
+            )
 
-    # Exactly one such file must exist at root (ZIP validation checks this too)
     return errors
 
 
@@ -1160,40 +1279,44 @@ def _write_template_report(
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
-    """Return list of validation errors (empty = OK)."""
+def _validate_zip(zip_path: Path, available_imgs: set[str], norm_soc: str = "mtk") -> list[str]:
+    """Return list of validation errors (empty = OK).
+
+    MTK:        requires windows_install_and_format_data.bat at root; no META-INF.
+    Snapdragon: requires windows_install_and_format_data.bat at root;
+                META-INF/windows/fastboot.exe present; DeadZone_firmware.txt present.
+    """
     errors: list[str] = []
     if not zip_path.is_file():
         return [f"ZIP not found: {zip_path}"]
     if not zip_path.name.startswith("DeadZone_"):
         errors.append(f"ZIP name must start with 'DeadZone_', got: {zip_path.name}")
     with zipfile.ZipFile(zip_path) as zf:
-        names = zf.namelist()
+        names      = zf.namelist()
         names_lower = {n.lower() for n in names}
 
+        # Required: images/super.img
         if not any("images/super.img" in n.lower() for n in names):
             errors.append("images/super.img missing from ZIP")
-        if not any(n.lower().endswith(".sh") or n.lower().endswith(".bat") for n in names):
-            errors.append("No flash scripts (.sh/.bat) found at ZIP root")
 
-        # Exactly one windows_install_and_format_data.bat at root
-        root_install_bats = [
+        # Required: windows_install_and_format_data.bat at root
+        root_bats = [
             n for n in names
             if "/" not in n and n.lower() == "windows_install_and_format_data.bat"
         ]
-        if len(root_install_bats) != 1:
+        if len(root_bats) != 1:
             errors.append(
                 f"Expected exactly one windows_install_and_format_data.bat at ZIP root, "
-                f"found {len(root_install_bats)}"
+                f"found {len(root_bats)}"
             )
 
-        # Forbidden root BAT scripts must not be present
+        # Forbidden BAT scripts (upgrade/format-only scripts must never ship)
         for fname in _FORBIDDEN_ROOT_BATS:
             hits = [n for n in names if "/" not in n and n.lower() == fname.lower()]
             if hits:
                 errors.append(f"Forbidden root BAT script found in ZIP: {fname}")
 
-        # Validate every images\xxx.img reference in BAT scripts exists in the ZIP
+        # Validate every images\xxx.img reference in the BAT actually exists in the ZIP
         for n in names:
             if not n.lower().endswith(".bat"):
                 continue
@@ -1202,6 +1325,29 @@ def _validate_zip(zip_path: Path, available_imgs: set[str]) -> list[str]:
                 ref = m.group(1).lower()
                 if f"images/{ref}" not in names_lower:
                     errors.append(f"{n}: references images\\{m.group(1)} which is not in ZIP")
+
+        # Snapdragon-specific: META-INF/windows/fastboot.exe must be present
+        if norm_soc == "snapdragon":
+            if not any("meta-inf/windows/fastboot.exe" in n.lower() for n in names):
+                errors.append("Snapdragon ZIP missing META-INF/windows/fastboot.exe")
+            if not any("images/deadzone_firmware.txt" in n.lower() for n in names):
+                errors.append("Snapdragon ZIP missing images/DeadZone_firmware.txt")
+            # Verify BAT does not have HyperUR branding
+            for n in names:
+                if "/" not in n and n.lower() == "windows_install_and_format_data.bat":
+                    content = zf.read(n).decode("utf-8", errors="replace")
+                    if "hyperur" in content.lower():
+                        errors.append("Snapdragon BAT contains forbidden HyperUR branding")
+                    if "deadzone" not in content.lower():
+                        errors.append("Snapdragon BAT missing DeadZone branding")
+                    if "mezo" not in content.lower():
+                        errors.append("Snapdragon BAT missing MEZO developer reference")
+
+        # MTK-specific: no META-INF allowed
+        if norm_soc == "mtk":
+            meta_inf_hits = [n for n in names if n.lower().startswith("meta-inf/")]
+            if meta_inf_hits:
+                errors.append(f"MTK ZIP must not contain META-INF: {meta_inf_hits[:3]}")
 
         for forbidden in FORBIDDEN_ENTRIES:
             hits = [n for n in names if forbidden.lower() in n.lower()]
@@ -1492,6 +1638,46 @@ def _gen_pipeline_scan_report() -> None:
     print(f"[PACKAGE] Pipeline scan → {REPORTS_DIR / 'pipeline_script_scan_report.txt'}")
 
 
+# ── Snapdragon firmware info file ────────────────────────────────────────────
+
+def _gen_firmware_txt(
+    img_dir: Path,
+    codename: str,
+    rom_version: str,
+    android_ver: str,
+    region: str,
+    style_name: str,
+    style_tier: str,
+) -> None:
+    """Generate images/DeadZone_firmware.txt for Snapdragon builds.
+
+    This file is placed inside the images/ directory and referenced by the
+    Snapdragon windows_install_and_format_data.bat for display only.
+    The file replaces any old HyperUR_firmware.txt from the uploaded template.
+    """
+    # Remove any old HyperUR firmware file that may have come from the template
+    old_names = ["HyperUR_firmware.txt", "hyperur_firmware.txt"]
+    for old in old_names:
+        old_p = img_dir / old
+        if old_p.is_file():
+            old_p.unlink()
+            print(f"[PACKAGE] Removed old firmware file: {old}")
+
+    content = (
+        f"Codename={codename}\n"
+        f"version={rom_version}\n"
+        f"Android={android_ver}\n"
+        f"Style={style_name}\n"
+        f"License={style_tier}\n"
+        f"Developer=MEZO\n"
+        f"SoC=Snapdragon\n"
+        f"Region={region}\n"
+    )
+    dest = img_dir / "DeadZone_firmware.txt"
+    dest.write_text(content, encoding="utf-8")
+    print(f"[PACKAGE] Generated images/DeadZone_firmware.txt")
+
+
 # ── Main packaging logic ──────────────────────────────────────────────────────
 
 def package() -> Path:
@@ -1556,11 +1742,40 @@ def package() -> Path:
     nested_root        = None
     print(f"[PACKAGE] Copied {len(template_files_copied)} template files from bin/final_zip_templates/{norm_soc}/")
 
+    # ── SoC-specific staging cleanup ─────────────────────────────────────────
+    if norm_soc == "snapdragon":
+        # Snapdragon: keep full META-INF structure (fastboot is at META-INF\windows\)
+        # Remove only old/unwanted files that should not be in the final ZIP.
+        for _old_name in ("Flashing_Tool_Windows_2.bat",
+                          "windows_install_upgrade.bat",
+                          "windows_format_data_only.bat"):
+            _p = staging / _old_name
+            if _p.is_file():
+                _p.unlink()
+                print(f"[PACKAGE] Removed old Snapdragon file from staging: {_old_name}")
+        # Remove separate bin/windows/ if it also exists (fastboot is now in META-INF/)
+        _bin_win = staging / "bin" / "windows"
+        if _bin_win.is_dir():
+            shutil.rmtree(staging / "bin")
+            print("[PACKAGE] Removed bin/ from Snapdragon staging (fastboot is in META-INF/windows/)")
+    else:
+        # MTK: remove platform-specific dirs that should not be in final ZIP
+        for _plat_dir in ("META-INF", "bin/linux", "bin/macos"):
+            _pd = staging / _plat_dir.replace("/", os.sep)
+            if _pd.is_dir():
+                shutil.rmtree(_pd)
+                print(f"[PACKAGE] Removed {_plat_dir}/ from MTK staging")
+
     # ── images/ directory — clear placeholders, prepare for real images ────────
     img_dir = staging / "images"
     if img_dir.is_dir():
         for _placeholder in img_dir.glob("*.img"):
             _placeholder.unlink()
+        # Remove any old HyperUR firmware file from the template
+        for _old_fw in img_dir.glob("*.txt"):
+            if "hyperur" in _old_fw.name.lower():
+                _old_fw.unlink()
+                print(f"[PACKAGE] Removed old firmware file from staging: {_old_fw.name}")
     img_dir.mkdir(exist_ok=True)
 
     copied_imgs: list[str] = []
@@ -1619,6 +1834,18 @@ def package() -> Path:
     win_warnings: list[str] = []
     unknown_imgs: list[str] = []   # no unknown images in the new generation model
 
+    # ── Snapdragon: generate images/DeadZone_firmware.txt ────────────────────
+    if norm_soc == "snapdragon":
+        _gen_firmware_txt(
+            img_dir      = img_dir,
+            codename     = _sanitize_name(codename),
+            rom_version  = rom_version or "UNKNOWN",
+            android_ver  = android_ver or "UNKNOWN",
+            region       = region,
+            style_name   = style_cfg["name"],
+            style_tier   = style_cfg["tier"],
+        )
+
     # ── Validate the generated windows_install_and_format_data.bat ────────────
     tpl_bat_errors = _validate_template_bat(staging, norm_soc)
     if tpl_bat_errors:
@@ -1654,7 +1881,7 @@ def package() -> Path:
     print(f"[PACKAGE] ZIP created: {size_mib:.1f} MiB  (ratio {ratio:.2f}x)")
 
     # ── Validate ZIP ──────────────────────────────────────────────────────────
-    zip_errors = _validate_zip(zip_path, available_imgs)
+    zip_errors = _validate_zip(zip_path, available_imgs, norm_soc)
     if zip_errors:
         print("[PACKAGE] VALIDATION ERRORS:", file=sys.stderr)
         for e in zip_errors:

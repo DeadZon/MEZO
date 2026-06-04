@@ -5,8 +5,9 @@ color 0B
 title DeadZone Snapdragon Installer
 cls
 
-set "fastboot=bin\windows\fastboot.exe"
-set "ROM_STYLE=DeadZone Stable"
+set "fastboot=META-INF\windows\fastboot.exe"
+set "ROM_STYLE=CN_VERSION_FROM_ROM"
+set "ROM_LICENSE=TIER_FROM_ROM"
 set "ROM_DEVELOPER=MEZO"
 set "ROM_VERSION=CN_VERSION_FROM_ROM"
 set "ROM_DEVICE=DEVICE_FROM_ROM"
@@ -22,16 +23,26 @@ if not exist "%fastboot%" (
 
 echo.
 echo ================================================================
-echo        DeadZone Snapdragon Installer  ^|  by MEZO
+echo              DEADZONE TEAM  ^|  by MEZO
+echo          Based on China Firmware - Snapdragon ROM
 echo ================================================================
 echo.
 echo  [ROM] Style      : %ROM_STYLE%
+echo  [ROM] License    : %ROM_LICENSE%
 echo  [ROM] Developer  : %ROM_DEVELOPER%
 echo  [ROM] Version    : %ROM_VERSION%
 echo  [ROM] Device     : %ROM_DEVICE%
 echo  [ROM] Android    : Android %ROM_ANDROID%
 echo  [ROM] Region     : %ROM_REGION%
+echo  [ROM] SoC        : Snapdragon
 echo.
+echo ================================================================
+echo.
+if exist "images\DeadZone_firmware.txt" (
+    echo  [INFO] ROM Firmware Information:
+    type "images\DeadZone_firmware.txt"
+    echo.
+)
 echo ================================================================
 echo.
 echo  [i] Read this information before flashing:
@@ -67,6 +78,8 @@ echo ##############################################################
 echo Please wait. The device will reboot once flashing is complete.
 echo ##############################################################
 %fastboot% set_active a
+
+:: BEGIN MEZO GENERATED IMAGE FLASH COMMANDS
 %fastboot% flash abl_a images\abl.img
 %fastboot% flash abl_b images\abl.img
 %fastboot% flash bluetooth_a images\bluetooth.img
@@ -111,6 +124,8 @@ echo ##############################################################
 %fastboot% flash vendor_boot_b images\vendor_boot.img
 %fastboot% flash cust images\cust.img
 %fastboot% flash super images\super.img
+:: END MEZO GENERATED IMAGE FLASH COMMANDS
+
 %fastboot% erase metadata
 %fastboot% erase userdata
 %fastboot% reboot
