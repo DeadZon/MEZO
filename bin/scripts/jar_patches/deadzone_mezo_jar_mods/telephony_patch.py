@@ -65,4 +65,4 @@ def patch_notification_channel_blockable(workspace: Path, results: list) -> None
     new_text = "\n".join(new_lines)
     write_smali(f, new_text)
     r.applied = True
-    results.append(r)
+    results.append(r)ر

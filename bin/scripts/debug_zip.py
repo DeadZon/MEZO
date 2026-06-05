@@ -90,6 +90,7 @@ def create_debug_zip() -> Path | None:
                 "output/reports/framework_patcher_error.txt",
                 "output/reports/final_zip_template_report.txt",
                 "output/reports/snapdragon_flash_script_report.txt",
+                "output/reports/flash_script_generation_report.txt",
                 "output/reports/deadzone_style_report.txt",
                 "output/reports/device_resolve_report.txt",
                 "output/reports/final_zip_manifest.txt",

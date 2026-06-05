@@ -1110,270 +1110,164 @@ def _gen_install_bat(
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """Generate windows_install_and_format_data.bat from the images actually present.
 
-    Keeps the DeadZone colored header/warning style.
-    Flash block is built from available_imgs using SoC-specific rules.
-    Always ends with: fastboot erase metadata / erase userdata / reboot.
+    Both MTK and Snapdragon use the same professional DeadZone template style:
+      - chcp 65001, color 0B, DeadZone title
+      - All ROM info read dynamically from images\DeadZone_firmware.txt at runtime
+      - No hardcoded codename, version, or device in the BAT body
+      - Device check: fastboot product vs %Codename% — mismatch stops immediately
+      - Each flash command stops on failure (no warn-and-continue)
+      - Wipe and reboot only after ALL flash commands succeed
 
     Returns: (flash_cmds_summary, skipped_pairs)
     """
     title = _INSTALL_BAT_TITLE.get(norm_soc, "DeadZone ROM Installer")
-    header_label = f"{title}  ^|  by MEZO"
 
     flash_pairs, skipped_pairs = _compute_flash_pairs(available_imgs, norm_soc)
 
-    # Build flash lines for the script and a plain summary list for reports
-    bat_flash_lines: list[str] = []
     flash_cmds_summary: list[str] = []
+    safe_flash_lines:   list[str] = []
     for partition, img in flash_pairs:
-        bat_flash_lines.append(f'%fastboot% flash {partition} "images\\{img}"')
+        safe_flash_lines += [
+            f'echo [FLASH] {partition}...',
+            f'%fastboot% flash {partition} images\\{img}',
+            f'if errorlevel 1 ( echo [ERROR] FLASH FAILED: {partition}'
+            f' ^& echo FAILED: {partition} >> "%log_file%"'
+            f' ^& pause ^& exit /B 1 )',
+            '',
+        ]
         flash_cmds_summary.append(f'fastboot flash {partition} images\\{img}')
-    flash_block = "\n".join(bat_flash_lines)
 
-    # Device-detection block differs slightly between SoCs (matching template style)
-    if norm_soc == "mtk":
-        device_detect = (
-            'echo Waiting for device...\n'
-            'set "device=unknown"\n'
-            'for /f "tokens=2" %%D in (\'"%fastboot%" getvar product 2^>^&1 ^| findstr /l /b /c:"product:"\') do set "device=%%D"\n'
-            '\n'
-            'echo.\n'
-            'echo Detected device: %device%\n'
-            'echo You are going to wipe your data and internal storage.\n'
-            'echo It will delete all your files and photos stored on internal storage.\n'
-            'set /p choice=Do you agree? (Y/N)\n'
-            'if /i "%choice%" neq "y" exit /B 0'
-        )
-        progress_banner = (
-            'echo ##################################################################\n'
-            'echo Please wait. The device will reboot when installation is finished.\n'
-            'echo ##################################################################'
-        )
-        compat_line = ""
-    else:
-        device_detect = (
-            'echo Waiting for device...\n'
-            'set "device="\n'
-            'for /f "tokens=2" %%A in (\'"%fastboot%" getvar product 2^>^&1 ^| findstr "\\<product:"\') do set "device=%%A"\n'
-            'if "%device%" equ "" echo Your device could not be detected. & pause & exit /B 1\n'
-            '\n'
-            'echo Your device: %device%\n'
-            'echo Compatible devices: %COMPATIBLE_DEVICES%\n'
-            'echo Your device will be flashed and the data partition will be formatted.\n'
-            'echo You will lose your apps, settings and files on internal storage.\n'
-            'set /p choice=Do you want to continue? [y/N]\n'
-            'if /i "%choice%" neq "y" exit /B 0'
-        )
-        progress_banner = (
-            'echo ##############################################################\n'
-            'echo Please wait. The device will reboot once flashing is complete.\n'
-            'echo ##############################################################'
-        )
-        compat_line = f'set "COMPATIBLE_DEVICES={codename}"\n'
+    flash_block = "\n".join(safe_flash_lines)
 
-    # Both SoCs use bin\windows\fastboot.exe.
-    # Snapdragon additionally reads codename from images\DeadZone_firmware.txt.
-    fastboot_path = "bin\\windows\\fastboot.exe"
+    # Shared firmware.txt reader block — same for MTK and Snapdragon
+    firmware_block = (
+        ':: Read ROM info from images\\DeadZone_firmware.txt\n'
+        'set "Codename=unknown"\n'
+        'set "ROM_DEVICE=unknown"\n'
+        'set "ROM_VERSION=UNKNOWN"\n'
+        'set "ROM_ANDROID=UNKNOWN"\n'
+        'set "ROM_STYLE=DeadZone"\n'
+        'set "ROM_LICENSE=Free"\n'
+        'set "ROM_DEVELOPER=MEZO"\n'
+        'set "ROM_REGION=Unknown"\n'
+        'set "ROM_SOC=Unknown"\n'
+        'if exist "images\\DeadZone_firmware.txt" (\n'
+        '    for /f "usebackq tokens=1,* delims==" %%a in ("images\\DeadZone_firmware.txt") do (\n'
+        '        if /i "%%a"=="Codename"  set "Codename=%%b"\n'
+        '        if /i "%%a"=="Device"    set "ROM_DEVICE=%%b"\n'
+        '        if /i "%%a"=="version"   set "ROM_VERSION=%%b"\n'
+        '        if /i "%%a"=="Android"   set "ROM_ANDROID=%%b"\n'
+        '        if /i "%%a"=="Style"     set "ROM_STYLE=%%b"\n'
+        '        if /i "%%a"=="License"   set "ROM_LICENSE=%%b"\n'
+        '        if /i "%%a"=="Developer" set "ROM_DEVELOPER=%%b"\n'
+        '        if /i "%%a"=="Region"    set "ROM_REGION=%%b"\n'
+        '        if /i "%%a"=="SoC"       set "ROM_SOC=%%b"\n'
+        '    )\n'
+        ') else (\n'
+        '    echo [WARN] images\\DeadZone_firmware.txt not found\n'
+        ')\n'
+    )
 
-    if norm_soc == "snapdragon":
-        soc_line = ""           # codename/style comes from firmware.txt at runtime
-        firmware_block = (
-            ':: Read ROM info from generated firmware file\n'
-            'set "Codename=unknown"\n'
-            'set "DeviceName=unknown"\n'
-            'set "ROM_VERSION=UNKNOWN"\n'
-            'set "ROM_ANDROID=UNKNOWN"\n'
-            'set "ROM_STYLE=DeadZone"\n'
-            'set "ROM_LICENSE=Free"\n'
-            'if exist "images\\DeadZone_firmware.txt" (\n'
-            '    for /f "usebackq tokens=1,* delims==" %%a in ("images\\DeadZone_firmware.txt") do (\n'
-            '        if /i "%%a"=="Codename"  set "Codename=%%b"\n'
-            '        if /i "%%a"=="Device"    set "DeviceName=%%b"\n'
-            '        if /i "%%a"=="version"   set "ROM_VERSION=%%b"\n'
-            '        if /i "%%a"=="Android"   set "ROM_ANDROID=%%b"\n'
-            '        if /i "%%a"=="Style"     set "ROM_STYLE=%%b"\n'
-            '        if /i "%%a"=="License"   set "ROM_LICENSE=%%b"\n'
-            '    )\n'
-            ') else (\n'
-            '    echo [WARN] images\\DeadZone_firmware.txt not found\n'
-            ')\n'
-        )
-        main_header = (
-            'echo ================================================================\n'
-            'echo              DEADZONE TEAM  ^|  by MEZO\n'
-            'echo          Based on China Firmware - Snapdragon ROM\n'
-            'echo ================================================================\n'
-        )
-    else:
-        soc_line      = ""
-        firmware_block = ""
-        main_header = (
-            f'echo ================================================================\n'
-            f'echo            {header_label}\n'
-            f'echo ================================================================\n'
-        )
-
-    if norm_soc == "snapdragon":
-        # Snapdragon: garnet reference style.
-        # - fastboot=bin\windows\fastboot.exe
-        # - codename read from images\DeadZone_firmware.txt at runtime
-        # - device check compares fastboot product vs %Codename%
-        # - each flash command stops immediately on failure
-        # - wipe/reboot only after ALL flash commands succeed
-
-        # Build per-command safe flash lines
-        sd_flash_lines: list[str] = []
-        for partition, img in flash_pairs:
-            sd_flash_lines += [
-                f'echo [FLASH] {partition}...',
-                f'%fastboot% flash {partition} images\\{img}',
-                f'if errorlevel 1 ( echo [ERROR] FLASH FAILED: {partition}'
-                f' ^& echo FAILED: {partition} >> "%log_file%"'
-                f' ^& pause ^& exit /B 1 )',
-                '',
-            ]
-        sd_flash_block = "\n".join(sd_flash_lines)
-
-        content = (
-            '@echo off\n'
-            'cd %~dp0\n'
-            f'set fastboot={fastboot_path}\n'
-            'set log_file=%~dp0installer_log.txt\n'
-            '\n'
-            f'if not exist %fastboot% echo [ERROR] %fastboot% not found. & pause & exit /B 1\n'
-            '\n'
-            + firmware_block +
-            '\n'
-            'echo.\n'
-            + main_header +
-            'echo.\n'
-            'echo  [ROM] Style    : %ROM_STYLE%\n'
-            'echo  [ROM] License  : %ROM_LICENSE%\n'
-            'echo  [ROM] Developer: MEZO\n'
-            'echo  [ROM] Version  : %ROM_VERSION%\n'
-            'echo  [ROM] Codename : %Codename%\n'
-            'echo  [ROM] Android  : Android %ROM_ANDROID%\n'
-            'echo  [ROM] SoC      : Snapdragon\n'
-            'echo.\n'
-            'echo ================================================================\n'
-            'echo.\n'
-            'echo  [i] Read this before flashing:\n'
-            'echo.\n'
-            'echo  1. UNLOCKED BOOTLOADER required.\n'
-            'echo     Close this window if your bootloader is NOT unlocked.\n'
-            'echo  2. This will ERASE ALL your data. Proceed carefully.\n'
-            'echo  3. DeadZone ROM is FREE. Contact MEZO if charged.\n'
-            'echo  4. MEZO is NOT responsible for bricks or data loss.\n'
-            'echo  5. This ROM is built for codename: %Codename%\n'
-            'echo.\n'
-            'echo  [i] Press any key to continue, or close to cancel.\n'
-            'echo.\n'
-            'pause >nul\n'
-            '\n'
-            'echo Waiting for fastboot device...\n'
-            'set device=unknown\n'
-            "for /f \"tokens=2\" %%D in ('%fastboot% getvar product 2^>^&1 ^| findstr /l /b /c:\"product:\"') do set device=%%D\n"
-            'echo  Detected device: %device%\n'
-            '\n'
-            'if /i not "%device%"=="%Codename%" (\n'
-            '    echo.\n'
-            '    echo [WARNING] Codename mismatch!\n'
-            '    echo  ROM built for : %Codename%\n'
-            '    echo  Device found  : %device%\n'
-            '    echo.\n'
-            '    echo  Flashing the WRONG ROM may permanently BRICK your device!\n'
-            '    echo.\n'
-            '    setlocal enabledelayedexpansion\n'
-            '    set /p _confirm=Type YES to continue at your own risk, or press Enter to exit:\n'
-            '    if /i not "!_confirm!"=="YES" exit /B 1\n'
-            '    endlocal\n'
-            ')\n'
-            'echo  Device check passed: %device%\n'
-            '\n'
-            'echo.\n'
-            'echo ##################################################################\n'
-            'echo Please wait. The device will reboot when installation is finished.\n'
-            'echo ##################################################################\n'
-            'echo %DATE% %TIME% DeadZone Install Start: %Codename% > "%log_file%"\n'
-            '%fastboot% set_active a\n'
-            '\n'
-            f'{FLASH_BLOCK_START}\n'
-            f'{sd_flash_block}\n'
-            f'{FLASH_BLOCK_END}\n'
-            '\n'
-            'echo.\n'
-            'echo All partitions flashed. Wiping data...\n'
-            'echo %DATE% %TIME% All flash OK >> "%log_file%"\n'
-            '%fastboot% erase metadata\n'
-            '%fastboot% erase userdata\n'
-            '%fastboot% reboot\n'
-        )
-    else:
-        # MTK: existing behavior
-        content = (
-            f'@echo off\n'
-            f'chcp 65001 >nul\n'
-            f'cd /d "%~dp0"\n'
-            f'color 0B\n'
-            f'title {title}\n'
-            f'cls\n'
-            f'\n'
-            f'set "fastboot={fastboot_path}"\n'
-            f'set "ROM_STYLE={style_name}"\n'
-            f'set "ROM_LICENSE={style_tier}"\n'
-            f'set "ROM_DEVELOPER=MEZO"\n'
-            f'set "ROM_VERSION={rom_version}"\n'
-            f'set "ROM_DEVICE={codename}"\n'
-            f'set "ROM_ANDROID={android_ver}"\n'
-            f'set "ROM_REGION={region}"\n'
-            f'{compat_line}'
-            f'\n'
-            f'if not exist "%fastboot%" (\n'
-            f'    echo [ERROR] fastboot not found: %fastboot%\n'
-            f'    pause\n'
-            f'    exit /B 1\n'
-            f')\n'
-            f'\n'
-            f'echo.\n'
-            f'{main_header}'
-            f'echo.\n'
-            f'echo  [ROM] Style      : %ROM_STYLE%\n'
-            f'echo  [ROM] License    : %ROM_LICENSE%\n'
-            f'echo  [ROM] Developer  : %ROM_DEVELOPER%\n'
-            f'echo  [ROM] Version    : %ROM_VERSION%\n'
-            f'echo  [ROM] Device     : %ROM_DEVICE%\n'
-            f'echo  [ROM] Android    : Android %ROM_ANDROID%\n'
-            f'echo  [ROM] Region     : %ROM_REGION%\n'
-            f'echo.\n'
-            f'echo ================================================================\n'
-            f'echo.\n'
-            f'echo  [i] Read this information before flashing:\n'
-            f'echo.\n'
-            f'echo  1. DeadZone ROM requires an UNLOCKED bootloader.\n'
-            f'echo     Close this window if your bootloader is NOT unlocked.\n'
-            f'echo  2. This will ERASE ALL your data. Proceed carefully.\n'
-            f'echo  3. DeadZone ROM is FREE. If anyone charges you for it,\n'
-            f'echo     contact MEZO immediately.\n'
-            f'echo  4. MEZO Team is NOT responsible for bricks or data loss.\n'
-            f'echo  5. Make sure this ROM build is for YOUR specific device.\n'
-            f'echo.\n'
-            f'echo  [i] If you agree to all of the above, press any key to continue.\n'
-            f'echo  [i] Otherwise, close this window now.\n'
-            f'echo.\n'
-            f'pause >nul\n'
-            f'\n'
-            f'{device_detect}\n'
-            f'\n'
-            f'{progress_banner}\n'
-            f'%fastboot% set_active a\n'
-            f'\n'
-            f'{FLASH_BLOCK_START}\n'
-            f'{flash_block}\n'
-            f'{FLASH_BLOCK_END}\n'
-            f'\n'
-            f'%fastboot% erase metadata\n'
-            f'%fastboot% erase userdata\n'
-            f'%fastboot% reboot\n'
-        )
+    content = (
+        '@echo off\n'
+        'chcp 65001 >nul\n'
+        'cd /d "%~dp0"\n'
+        'color 0B\n'
+        f'title {title}\n'
+        'cls\n'
+        '\n'
+        'set "fastboot=bin\\windows\\fastboot.exe"\n'
+        'set "log_file=%~dp0installer_log.txt"\n'
+        '\n'
+        'if not exist "%fastboot%" (\n'
+        '    echo [ERROR] fastboot not found: %fastboot%\n'
+        '    pause\n'
+        '    exit /B 1\n'
+        ')\n'
+        '\n'
+        + firmware_block +
+        '\n'
+        'echo.\n'
+        'echo ================================================================\n'
+        f'echo            {title}  ^|  by MEZO\n'
+        'echo ================================================================\n'
+        'echo.\n'
+        'echo  [ROM] Style      : %ROM_STYLE%\n'
+        'echo  [ROM] License    : %ROM_LICENSE%\n'
+        'echo  [ROM] Developer  : %ROM_DEVELOPER%\n'
+        'echo  [ROM] Version    : %ROM_VERSION%\n'
+        'echo  [ROM] Device     : %ROM_DEVICE%\n'
+        'echo  [ROM] Android    : Android %ROM_ANDROID%\n'
+        'echo  [ROM] Region     : %ROM_REGION%\n'
+        'echo  [ROM] SoC        : %ROM_SOC%\n'
+        'echo  [ROM] Codename   : %Codename%\n'
+        'echo.\n'
+        'echo ================================================================\n'
+        'echo.\n'
+        'echo  [i] Read this information before flashing:\n'
+        'echo.\n'
+        'echo  1. DeadZone ROM requires an UNLOCKED bootloader.\n'
+        'echo     Close this window if your bootloader is NOT unlocked.\n'
+        'echo  2. This will ERASE ALL your data. Proceed carefully.\n'
+        'echo  3. DeadZone ROM is FREE. If anyone charges you for it,\n'
+        'echo     contact MEZO immediately.\n'
+        'echo  4. MEZO Team is NOT responsible for bricks or data loss.\n'
+        'echo  5. Make sure this ROM build is for YOUR specific device.\n'
+        'echo.\n'
+        'echo  [i] If you agree to all of the above, press any key to continue.\n'
+        'echo  [i] Otherwise, close this window now.\n'
+        'echo.\n'
+        'pause >nul\n'
+        '\n'
+        'echo Waiting for device...\n'
+        'set "device=unknown"\n'
+        "for /f \"tokens=2\" %%D in ('%fastboot% getvar product 2^>^&1 ^| findstr /l /b /c:\"product:\"') do set \"device=%%D\"\n"
+        '\n'
+        'echo.\n'
+        'echo  Detected device : %device%\n'
+        'echo  Expected device : %Codename%\n'
+        'echo.\n'
+        '\n'
+        'if /i not "%device%"=="%Codename%" (\n'
+        '    echo ============================================================\n'
+        '    echo  ERROR: WRONG DEVICE DETECTED\n'
+        '    echo  This ROM is built for : %Codename%\n'
+        '    echo  Your device reports   : %device%\n'
+        '    echo  DO NOT flash this ROM on the wrong device!\n'
+        '    echo  Exiting now.\n'
+        '    echo ============================================================\n'
+        '    pause\n'
+        '    exit /B 1\n'
+        ')\n'
+        '\n'
+        'echo  Device verified: %device%\n'
+        'echo.\n'
+        'echo  You are going to WIPE YOUR DATA and flash the ROM.\n'
+        'echo  All apps, settings and files on internal storage will be erased.\n'
+        'echo.\n'
+        'set /p _final=Type YES to confirm and start flashing: \n'
+        'if /i not "%_final%"=="YES" exit /B 0\n'
+        '\n'
+        'echo.\n'
+        'echo ##################################################################\n'
+        'echo Please wait. The device will reboot when installation is finished.\n'
+        'echo ##################################################################\n'
+        'echo %DATE% %TIME% DeadZone Install Start: %Codename% > "%log_file%"\n'
+        '%fastboot% set_active a\n'
+        '\n'
+        f'{FLASH_BLOCK_START}\n'
+        f'{flash_block}\n'
+        f'{FLASH_BLOCK_END}\n'
+        '\n'
+        'echo.\n'
+        'echo All partitions flashed. Wiping data...\n'
+        'echo %DATE% %TIME% All flash OK >> "%log_file%"\n'
+        '%fastboot% erase metadata\n'
+        'if errorlevel 1 ( echo [ERROR] erase metadata failed ^& pause ^& exit /B 1 )\n'
+        '%fastboot% erase userdata\n'
+        'if errorlevel 1 ( echo [ERROR] erase userdata failed ^& pause ^& exit /B 1 )\n'
+        '%fastboot% reboot\n'
+    )
 
     bat_path = staging / "windows_install_and_format_data.bat"
     bat_path.write_text(content, encoding="utf-8")
@@ -1459,8 +1353,14 @@ def _replace_bat_placeholders(bat_path: Path, replacements: dict[str, str]) -> l
 def _validate_template_bat(staging: Path, norm_soc: str) -> list[str]:
     """Validate windows_install_and_format_data.bat in staging is present and SoC-correct.
 
-    For MTK: expects _ab partition names, no Snapdragon _a/_b slot pattern.
-    For Snapdragon: expects no MTK _ab partition names.
+    Both SoCs share the unified professional template:
+      - chcp 65001, color 0B, bin\\windows\\fastboot.exe, firmware.txt reader
+      - Hard device check (no YES override), stop-on-failure flash block
+      - DeadZone + MEZO branding; no HyperUR/OxygenOS/Niexia/Elite branding
+      - No hardcoded codename (garnet/zircon) in mismatch checks
+
+    MTK:        _ab partition names required; no _a/_b dual-slot pattern
+    Snapdragon: _ab suffix required; also requires xbl_config_ab or similar Qualcomm partitions
     """
     errors: list[str] = []
     bat = staging / "windows_install_and_format_data.bat"
@@ -1473,59 +1373,71 @@ def _validate_template_bat(staging: Path, norm_soc: str) -> list[str]:
         errors.append("windows_install_and_format_data.bat is empty")
         return errors
 
+    # ── Shared requirements (both SoCs) ──────────────────────────────────────
     if "fastboot" not in content.lower():
-        errors.append("windows_install_and_format_data.bat: no fastboot reference found")
+        errors.append("BAT: no fastboot reference found")
 
+    if "bin\\windows\\fastboot.exe" not in content and \
+       "bin/windows/fastboot.exe" not in content:
+        errors.append("BAT: must use bin\\windows\\fastboot.exe")
+
+    if "DeadZone_firmware.txt" not in content:
+        errors.append("BAT: must read from images\\DeadZone_firmware.txt")
+
+    if "chcp 65001" not in content:
+        errors.append("BAT: must set chcp 65001")
+
+    if "color 0B" not in content:
+        errors.append("BAT: must set color 0B")
+
+    # Hard device check (no YES-override code path)
+    if re.search(r'Type YES to continue at your own risk', content, re.IGNORECASE):
+        errors.append("BAT: must not have a YES-override for device mismatch")
+
+    # Stop-on-failure flash block
+    if "FLASH_FAILED=1" in content:
+        errors.append("BAT: must not use warn-and-continue FLASH_FAILED pattern (use exit /B 1 instead)")
+
+    # Must read Codename dynamically
+    if re.search(r'neq\s+"garnet"', content, re.IGNORECASE) or \
+       re.search(r'=="garnet"', content, re.IGNORECASE) or \
+       re.search(r'neq\s+"zircon"', content, re.IGNORECASE):
+        errors.append("BAT: must not hardcode garnet/zircon — use dynamic %Codename%")
+
+    # Forbidden branding
+    for bad in ("hyperur", "oxygenos", "niexia", "elite rom", "ported by"):
+        if bad in content.lower():
+            errors.append(f"BAT: must not contain '{bad}' branding")
+
+    # Required branding
+    if "deadzone" not in content.lower():
+        errors.append("BAT: must contain DeadZone branding")
+    if "mezo" not in content.lower():
+        errors.append("BAT: must contain MEZO developer reference")
+
+    # Wipe/reboot must follow flash block (not before it)
+    flash_block_start = content.find(FLASH_BLOCK_START)
+    flash_block_end   = content.find(FLASH_BLOCK_END)
+    erase_meta        = content.find("erase metadata")
+    if flash_block_start != -1 and flash_block_end != -1 and erase_meta != -1:
+        if erase_meta < flash_block_end:
+            errors.append("BAT: erase metadata/userdata must come AFTER the flash block, not before")
+
+    # ── SoC-specific ──────────────────────────────────────────────────────────
     if norm_soc == "mtk":
-        # MTK: must use _ab partition names
         if "_ab" not in content.lower():
-            errors.append(
-                "windows_install_and_format_data.bat: MTK template must contain _ab partition names"
-            )
-        # MTK: must not use Snapdragon _a/_b dual-slot suffix pattern
+            errors.append("BAT (MTK): must contain _ab partition names")
         if re.search(r'flash\s+\w+_[ab]\s+images\\', content, re.IGNORECASE):
-            errors.append(
-                "windows_install_and_format_data.bat: MTK template must not use Snapdragon _a/_b slot pattern"
-            )
+            errors.append("BAT (MTK): must not use Snapdragon _a/_b dual-slot pattern")
     else:
-        # Snapdragon: garnet reference style
-        # Must use _ab suffix (not _a/_b dual-slot) — same as garnet reference script
+        # Snapdragon: must use _ab suffix
         if not re.search(r'flash\s+\w+_ab\s+images\\', content, re.IGNORECASE):
-            errors.append(
-                "windows_install_and_format_data.bat: Snapdragon must use _ab partition style (garnet reference)"
-            )
-        # Must use bin\windows\fastboot.exe
-        if "bin\\windows\\fastboot.exe" not in content and \
-           "bin/windows/fastboot.exe" not in content:
-            errors.append(
-                "windows_install_and_format_data.bat: Snapdragon must use bin\\windows\\fastboot.exe"
-            )
-        # Must reference DeadZone_firmware.txt
-        if "DeadZone_firmware.txt" not in content:
-            errors.append(
-                "windows_install_and_format_data.bat: Snapdragon must reference images\\DeadZone_firmware.txt"
-            )
-        # Must use dynamic codename (not hardcoded garnet)
-        if re.search(r'neq\s+"garnet"', content, re.IGNORECASE) or \
-           re.search(r'==["\s]garnet["\s]', content, re.IGNORECASE):
-            errors.append(
-                "windows_install_and_format_data.bat: must not hardcode garnet — use dynamic %Codename%"
-            )
-        # Must not contain HyperUR/OxygenOS/Niexia branding
-        for bad in ("hyperur", "oxygenos", "niexia", "ported by"):
-            if bad in content.lower():
-                errors.append(
-                    f"windows_install_and_format_data.bat: must not contain '{bad}' branding"
-                )
-        # Must contain DeadZone and MEZO
-        if "deadzone" not in content.lower():
-            errors.append(
-                "windows_install_and_format_data.bat: must contain DeadZone branding"
-            )
-        if "mezo" not in content.lower():
-            errors.append(
-                "windows_install_and_format_data.bat: must contain MEZO developer reference"
-            )
+            errors.append("BAT (SD): must use _ab partition style (garnet reference)")
+        # Must NOT use _a/_b dual-slot flash (not boot_a/boot_b/vendor_boot_a/vendor_boot_b etc.)
+        for bad_part in ("boot_a ", "boot_b ", "vendor_boot_a ", "vendor_boot_b ",
+                         "vbmeta_a ", "vbmeta_b "):
+            if f"flash {bad_part}" in content.lower():
+                errors.append(f"BAT (SD): must not flash {bad_part.strip()} (use _ab suffix)")
 
     return errors
 
@@ -1679,22 +1591,26 @@ def _validate_zip(zip_path: Path, available_imgs: set[str], norm_soc: str = "mtk
                 if f"images/{ref}" not in names_lower:
                     errors.append(f"{n}: references images\\{m.group(1)} which is not in ZIP")
 
+        # Both SoCs: images/DeadZone_firmware.txt must be present
+        if not any("images/deadzone_firmware.txt" in n.lower() for n in names):
+            errors.append(f"{norm_soc.upper()} ZIP missing images/DeadZone_firmware.txt")
+
+        # Both SoCs: BAT branding checks
+        for n in names:
+            if "/" not in n and n.lower() == "windows_install_and_format_data.bat":
+                content = zf.read(n).decode("utf-8", errors="replace")
+                for bad in ("hyperur", "oxygenos", "niexia", "elite rom"):
+                    if bad in content.lower():
+                        errors.append(f"BAT contains forbidden '{bad}' branding")
+                if "deadzone" not in content.lower():
+                    errors.append("BAT missing DeadZone branding")
+                if "mezo" not in content.lower():
+                    errors.append("BAT missing MEZO developer reference")
+
         # Snapdragon-specific: bin/windows/fastboot.exe must be present
         if norm_soc == "snapdragon":
             if not any("bin/windows/fastboot.exe" in n.lower() for n in names):
                 errors.append("Snapdragon ZIP missing bin/windows/fastboot.exe")
-            if not any("images/deadzone_firmware.txt" in n.lower() for n in names):
-                errors.append("Snapdragon ZIP missing images/DeadZone_firmware.txt")
-            # Verify BAT does not have HyperUR branding
-            for n in names:
-                if "/" not in n and n.lower() == "windows_install_and_format_data.bat":
-                    content = zf.read(n).decode("utf-8", errors="replace")
-                    if "hyperur" in content.lower():
-                        errors.append("Snapdragon BAT contains forbidden HyperUR branding")
-                    if "deadzone" not in content.lower():
-                        errors.append("Snapdragon BAT missing DeadZone branding")
-                    if "mezo" not in content.lower():
-                        errors.append("Snapdragon BAT missing MEZO developer reference")
 
         # MTK-specific: no META-INF allowed
         if norm_soc == "mtk":
@@ -1734,12 +1650,11 @@ def _write_flash_scan_report(
         f"Generated:               {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
         f"SoC detected:            {soc_family.upper()}",
         f"Template style:          {style_label}",
-        f"Codename check:          ENABLED (stops on mismatch before flashing)",
+        f"Codename check:          ENABLED (hard stop on mismatch, no override)",
         f"Image preflight:         DISABLED (no if-not-exist blocking)",
-        f"Flash error behavior:    warn-and-continue (FLASH_FAILED=1, no exit)",
-        f"erase frp:               ENABLED (post-flash cleanup)",
-        f"fastboot -w:             ENABLED (post-flash cleanup)",
-        f"set_active a:            ENABLED (post-flash cleanup)",
+        f"Flash error behavior:    stop-immediately (exit /B 1 on first failure)",
+        f"Wipe behavior:           erase metadata + erase userdata AFTER all flash succeeds",
+        f"set_active a:            ENABLED (pre-flash)",
         "",
         f"Images folder:   {img_dir}",
         f"Images found:    {len(available_imgs)}",
@@ -1993,6 +1908,94 @@ def _gen_pipeline_scan_report() -> None:
 
 # ── Snapdragon flash script report ───────────────────────────────────────────
 
+def _write_flash_script_generation_report(
+    norm_soc: str,
+    codename: str,
+    rom_version: str,
+    android_ver: str,
+    region: str,
+    style_name: str,
+    style_tier: str,
+    available_imgs: set[str],
+    flash_pairs:  list[tuple[str, str]],
+    skipped_pairs: list[tuple[str, str]],
+    bat_path: Path,
+    validation_result: str,
+) -> None:
+    """Write output/reports/flash_script_generation_report.txt for both SoCs."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    soc_label   = "MTK" if norm_soc == "mtk" else "Snapdragon"
+    flash_style = "MTK _ab" if norm_soc == "mtk" else "garnet reference _ab"
+    cfg_device  = resolve(codename)
+    display_name = cfg_device.get("display_name", "") or codename
+    fw_txt_path = bat_path.parent / "images" / "DeadZone_firmware.txt"
+
+    lines = [
+        "DeadZone Flash Script Generation Report",
+        "=" * 50,
+        f"Generated:              {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
+        "",
+        "ROM Information:",
+        f"  SoC:                  {soc_label}",
+        f"  Flash style:          {flash_style}",
+        f"  Firmware info path:   images/DeadZone_firmware.txt",
+        f"  Codename:             {codename}",
+        f"  Device:               {display_name}",
+        f"  ROM Version:          {rom_version}",
+        f"  Android:              {android_ver}",
+        f"  Style:                {style_name}",
+        f"  License:              {style_tier}",
+        f"  Region:               {region}",
+        "",
+        f"  DeadZone_firmware.txt present: {'YES' if fw_txt_path.is_file() else 'NO'}",
+        "",
+        f"Images discovered ({len(available_imgs)}):",
+    ]
+    fmap = MTK_FLASH_MAP if norm_soc == "mtk" else SD_FLASH_MAP
+    for img in sorted(available_imgs):
+        part = fmap.get(img, "(not flashed)")
+        lines.append(f"  {img:<35s}  → {part}")
+
+    lines += [
+        "",
+        f"Generated flash commands ({len(flash_pairs)}):",
+    ]
+    for part, img in flash_pairs:
+        lines.append(f"  fastboot flash {part} images\\{img}")
+
+    if skipped_pairs:
+        lines += ["", f"Skipped images ({len(skipped_pairs)}):"]
+        for img, reason in skipped_pairs:
+            lines.append(f"  SKIP {img}: {reason}")
+    else:
+        lines += ["", "Skipped images: none"]
+
+    lines += [
+        "",
+        f"Generated BAT:          {bat_path.name}",
+        f"  Present:              {'YES' if bat_path.is_file() else 'NO'}",
+    ]
+    if bat_path.is_file():
+        lines.append(f"  Size:                 {bat_path.stat().st_size:,} bytes")
+
+    lines += [
+        "",
+        "BAT behavior:",
+        "  Device check:         hard stop on mismatch — no override option",
+        "  Flash failure:        exit /B 1 immediately on first failure",
+        "  Wipe:                 erase metadata + erase userdata AFTER all flash succeed",
+        "  Reboot:               after wipe succeeds",
+        "  ROM info:             all fields read from images\\DeadZone_firmware.txt at runtime",
+        "",
+        f"Validation result:      {validation_result}",
+    ]
+
+    out = REPORTS_DIR / "flash_script_generation_report.txt"
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[PACKAGE] Flash script generation report → {out}")
+
+
 def _write_sd_flash_script_report(
     codename:    str,
     rom_version: str,
@@ -2073,15 +2076,14 @@ def _gen_firmware_txt(
     region: str,
     style_name: str,
     style_tier: str,
+    norm_soc: str,
     device_name: str = "",
 ) -> None:
-    """Generate images/DeadZone_firmware.txt for Snapdragon builds.
+    """Generate images/DeadZone_firmware.txt for MTK and Snapdragon builds.
 
-    This file is placed inside the images/ directory and referenced by the
-    Snapdragon windows_install_and_format_data.bat for display only.
-    The file replaces any old HyperUR_firmware.txt from the uploaded template.
+    Read at runtime by windows_install_and_format_data.bat for all display fields.
+    Replaces any old HyperUR_firmware.txt from uploaded templates.
     """
-    # Remove any old HyperUR firmware file that may have come from the template
     old_names = ["HyperUR_firmware.txt", "hyperur_firmware.txt"]
     for old in old_names:
         old_p = img_dir / old
@@ -2089,7 +2091,8 @@ def _gen_firmware_txt(
             old_p.unlink()
             print(f"[PACKAGE] Removed old firmware file: {old}")
 
-    display = device_name or codename
+    soc_label = "MTK" if norm_soc == "mtk" else "Snapdragon"
+    display   = device_name or codename
     content = (
         f"Codename={codename}\n"
         f"Device={display}\n"
@@ -2098,12 +2101,12 @@ def _gen_firmware_txt(
         f"Style={style_name}\n"
         f"License={style_tier}\n"
         f"Developer=MEZO\n"
-        f"SoC=Snapdragon\n"
+        f"SoC={soc_label}\n"
         f"Region={region}\n"
     )
     dest = img_dir / "DeadZone_firmware.txt"
     dest.write_text(content, encoding="utf-8")
-    print(f"[PACKAGE] Generated images/DeadZone_firmware.txt")
+    print(f"[PACKAGE] Generated images/DeadZone_firmware.txt (SoC={soc_label})")
 
 
 # ── Main packaging logic ──────────────────────────────────────────────────────
@@ -2289,18 +2292,18 @@ def package() -> Path:
     win_warnings: list[str] = []
     unknown_imgs: list[str] = []   # no unknown images in the new generation model
 
-    # ── Snapdragon: generate images/DeadZone_firmware.txt ────────────────────
-    if norm_soc == "snapdragon":
-        _gen_firmware_txt(
-            img_dir     = img_dir,
-            codename    = _sanitize_name(codename),
-            rom_version = rom_version or "UNKNOWN",
-            android_ver = android_ver or "UNKNOWN",
-            region      = region,
-            style_name  = style_cfg["name"],
-            style_tier  = style_cfg["tier"],
-            device_name = cfg.get("display_name", "") or _sanitize_name(codename),
-        )
+    # ── Generate images/DeadZone_firmware.txt for both SoCs ──────────────────
+    _gen_firmware_txt(
+        img_dir     = img_dir,
+        codename    = _sanitize_name(codename),
+        rom_version = rom_version or "UNKNOWN",
+        android_ver = android_ver or "UNKNOWN",
+        region      = region,
+        style_name  = style_cfg["name"],
+        style_tier  = style_cfg["tier"],
+        norm_soc    = norm_soc,
+        device_name = cfg.get("display_name", "") or _sanitize_name(codename),
+    )
 
     # ── Validate the generated windows_install_and_format_data.bat ────────────
     tpl_bat_errors = _validate_template_bat(staging, norm_soc)
@@ -2311,22 +2314,22 @@ def package() -> Path:
         sys.exit(1)
     print("[PACKAGE] Generated BAT validation: PASS")
 
-    # ── Snapdragon: write detailed flash script report ────────────────────────
-    if norm_soc == "snapdragon":
-        flash_pairs_for_report, _ = _compute_flash_pairs(available_imgs, norm_soc)
-        _write_sd_flash_script_report(
-            codename       = _sanitize_name(codename),
-            rom_version    = rom_version or "UNKNOWN",
-            android_ver    = android_ver or "UNKNOWN",
-            region         = region,
-            style_name     = style_cfg["name"],
-            style_tier     = style_cfg["tier"],
-            available_imgs = available_imgs,
-            flash_pairs    = flash_pairs_for_report,
-            skipped_pairs  = skipped_pairs,
-            bat_path       = staging / "windows_install_and_format_data.bat",
-            validation_result = "PASS",
-        )
+    # ── Write flash script generation report (both SoCs) ─────────────────────
+    flash_pairs_for_report, _ = _compute_flash_pairs(available_imgs, norm_soc)
+    _write_flash_script_generation_report(
+        norm_soc       = norm_soc,
+        codename       = _sanitize_name(codename),
+        rom_version    = rom_version or "UNKNOWN",
+        android_ver    = android_ver or "UNKNOWN",
+        region         = region,
+        style_name     = style_cfg["name"],
+        style_tier     = style_cfg["tier"],
+        available_imgs = available_imgs,
+        flash_pairs    = flash_pairs_for_report,
+        skipped_pairs  = skipped_pairs,
+        bat_path       = staging / "windows_install_and_format_data.bat",
+        validation_result = "PASS",
+    )
 
     # ── Write flash scan report ───────────────────────────────────────────────
     _write_flash_scan_report(
