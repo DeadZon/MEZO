@@ -167,13 +167,14 @@ def mark_built(item: dict) -> None:
 def detect_os3(text: str) -> bool:
     """Return True if the post is about OS3 / HyperOS 3."""
     t = text.lower()
-    if "hyperos 3" in t or "hyper os 3" in t:
+    if "hyperos 3" in t or "hyper os 3" in t or "hyperos3" in t:
+        return True
+    if re.search(r'#hyperos3\b', t):
         return True
     if re.search(r'\bos3\b', t):
         return True
     if re.search(r'os3\.\d', t):
         return True
-    # Version string like OS3.x.x.x.XXXX
     if re.search(r'\bos3\.\d+\.\d+', t):
         return True
     return False
@@ -196,19 +197,36 @@ def detect_region(text: str, version: str = "") -> str | None:
 
     # Version string region code analysis
     # Pattern: OS3.0.303.0.WNOCNXM — the last segment contains region
+    # Format: [3-char model][2-char region]XM  e.g. WNO + CN + XM
+    _SUFFIX_REGION: dict[str, str | None] = {
+        "CN": "China",
+        "MI": "Global",   # MIXM = Global
+        "GL": "Global",   # GLXM = Global (legacy)
+        "EU": None,       # Europe
+        "IN": None,       # India
+        "ID": None,       # Indonesia
+        "TW": None,       # Taiwan
+        "TR": None,       # Turkey
+        "RU": None,       # Russia
+    }
     v_match = re.search(
-        r'os3\.\d+\.\d+\.\d+\.([A-Z0-9]+)',
+        r'os3\.\d+\.\d+\.\d+\.([A-Z0-9]{4,})',
         text + " " + version,
         re.IGNORECASE,
     )
     if v_match:
         code = v_match.group(1).upper()
-        if "EEA" in code or "EU" in code:
-            return None  # EU
+        if code.endswith("XM") and len(code) >= 4:
+            rc = code[-4:-2]
+            if rc in _SUFFIX_REGION:
+                return _SUFFIX_REGION[rc]
+        # Legacy fallbacks for non-standard suffix lengths
+        if "EEA" in code or code[3:5] == "EU":
+            return None
         if "IND" in code:
-            return None  # India
+            return None
         if "IDN" in code:
-            return None  # Indonesia
+            return None
         if "GL" in code or "GLO" in code:
             return "Global"
         if "CN" in code:

@@ -19,6 +19,9 @@ on:
       max_builds:
         description: 'Maximum builds per run (must be 1)'
         default: '1'
+      scan_pages:
+        description: 'Number of TECH_MUKUL pages to scan (default 5)'
+        default: '5'
 
   schedule:
     # Auto scan every 6 hours — does not build, only updates queue
@@ -126,7 +129,10 @@ jobs:
       # ══════════════════════════════════════════════════════════════════════
       - name: Scan TECH_MUKUL
         if: ${{ steps.mode.outputs.mode == 'scan_only' || steps.mode.outputs.mode == 'scan_and_build' }}
-        run: python3 scripts/scan_tech_mukul.py
+        run: |
+          PAGES="${{ inputs.scan_pages }}"
+          [ -z "$PAGES" ] && PAGES=5
+          python3 scripts/scan_tech_mukul.py --scan-pages "$PAGES"
 
       # ══════════════════════════════════════════════════════════════════════
       #  BUILD

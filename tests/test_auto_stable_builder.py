@@ -73,6 +73,12 @@ class TestDetectOs3:
     def test_os3_mixed_case(self):
         assert detect_os3("Running os3.0 firmware")
 
+    def test_hyperos3_hashtag_no_space(self):
+        assert detect_os3("#HyperOS3 Update Released | #Degas #Taiwan")
+
+    def test_hyperos3_hashtag_with_version(self):
+        assert detect_os3("┌ HyperOS 3.1: OS3.0.301.0.WNETWXM")
+
     def test_hyperos1_rejected(self):
         assert not detect_os3("HyperOS 1.0 Stable China")
 
@@ -117,6 +123,15 @@ class TestDetectRegion:
 
     def test_indonesia_rejected(self):
         assert detect_region("Indonesia HyperOS 3") is None
+
+    def test_global_from_version_mixm_code(self):
+        assert detect_region("ROM update", "OS3.0.304.0.WNRMIXM") == "Global"
+
+    def test_taiwan_from_version_twxm_returns_none(self):
+        assert detect_region("ROM update", "OS3.0.301.0.WNETWXM") is None
+
+    def test_europe_from_version_euxm_returns_none(self):
+        assert detect_region("ROM update", "OS3.0.6.0.WNPEUXM") is None
 
     def test_unknown_returns_none(self):
         assert detect_region("Some ROM no region") is None
@@ -508,3 +523,253 @@ class TestPostParser:
         ]
         assert detect_rom_type("", links[1]) == "fastboot"
         assert detect_rom_type("", links[0]) == "recovery"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TECH_MUKUL title parser (scan_tech_mukul.py helpers)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTechMukulTitleParser:
+    """Tests for _extract_post_after_pipe and _get_raw_region."""
+
+    def setup_method(self):
+        from scan_tech_mukul import (
+            _extract_post_after_pipe,
+            _get_raw_region,
+            _resolve_codename,
+        )
+        self._pipe   = _extract_post_after_pipe
+        self._region = _get_raw_region
+        self._codename = _resolve_codename
+
+    SUPPORTED = {"degas", "garnet", "zircon", "marble", "aurora"}
+
+    # ── _extract_post_after_pipe ──────────────────────────────────────────────
+
+    def test_pipe_format_codename_and_region(self):
+        title = "#Xiaomi14T #HyperOS3 Update Released | #Degas #Taiwan"
+        codename, region = self._pipe(title)
+        assert codename == "degas"
+        assert region   == "taiwan"
+
+    def test_pipe_format_china(self):
+        title = "#Xiaomi14T #HyperOS3 Update Released | #Degas #China"
+        codename, region = self._pipe(title)
+        assert codename == "degas"
+        assert region   == "china"
+
+    def test_pipe_format_no_region(self):
+        title = "Some post | #garnet"
+        codename, region = self._pipe(title)
+        assert codename == "garnet"
+        assert region is None
+
+    def test_no_pipe_returns_none(self):
+        codename, region = self._pipe("No pipe here #degas")
+        assert codename is None
+        assert region   is None
+
+    # ── _get_raw_region ───────────────────────────────────────────────────────
+
+    def test_raw_region_taiwan_from_version(self):
+        assert self._region("some text", "OS3.0.301.0.WNETWXM") == "Taiwan"
+
+    def test_raw_region_china_from_version(self):
+        assert self._region("some text", "OS3.0.303.0.WNOCNXM") == "China"
+
+    def test_raw_region_global_from_mixm(self):
+        assert self._region("some text", "OS3.0.304.0.WNRMIXM") == "Global"
+
+    def test_raw_region_europe_from_euxm(self):
+        assert self._region("some text", "OS3.0.6.0.WNPEUXM") == "Europe"
+
+    def test_raw_region_taiwan_from_hashtag(self):
+        title = "#Xiaomi14T #HyperOS3 Update Released | #Degas #Taiwan"
+        assert self._region(title) == "Taiwan"
+
+    def test_raw_region_china_from_hashtag(self):
+        title = "#Xiaomi14T #HyperOS3 Update Released | #Degas #China"
+        assert self._region(title) == "China"
+
+    # ── _resolve_codename ─────────────────────────────────────────────────────
+
+    def test_resolve_codename_from_pipe(self):
+        title = "#Xiaomi14T #HyperOS3 Update Released | #Degas #Taiwan"
+        assert self._codename(title, [], self.SUPPORTED) == "degas"
+
+    def test_resolve_codename_fallback_to_hashtag(self):
+        text = "#garnet HyperOS 3 China Stable OS3.0.303.0.WNOCNXM"
+        assert self._codename(text, [], self.SUPPORTED) == "garnet"
+
+    def test_resolve_codename_not_supported_returns_none(self):
+        title = "#Xiaomi14T #HyperOS3 Update Released | #UnknownDevice #China"
+        assert self._codename(title, [], self.SUPPORTED) is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TECH_MUKUL post parsing integration (detect_os3 + detect_region + classify)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTechMukulPostParsing:
+    """Integration tests using realistic TECH_MUKUL post text."""
+
+    SAMPLE_TITLE_ONLY = (
+        "#Xiaomi14T #HyperOS3 Update Released | #Degas #Taiwan"
+    )
+
+    SAMPLE_FULL_TAIWAN = (
+        "#Xiaomi14T #HyperOS3 Update Released | #Degas #Taiwan\n"
+        "┌ HyperOS 3.1: OS3.0.301.0.WNETWXM\n"
+        "➤ Recovery ROM https://bigota.d.miui.com/degas_OS3.0.301.0.zip"
+    )
+
+    SAMPLE_FULL_CHINA = (
+        "#Xiaomi14T #HyperOS3 Update Released | #Degas #China\n"
+        "┌ HyperOS 3: OS3.0.303.0.WNOCNXM\n"
+        "➤ Fastboot ROM https://bigota.d.miui.com/fastboot_degas_OS3.0.303.0.zip"
+    )
+
+    SAMPLE_ROLLOUT = (
+        "#Xiaomi14T #HyperOS3 Update Released | #Degas #China\n"
+        "★ OS3.0.303.0.WNOCNXM Rollout Started\n"
+        "➤ Fastboot ROM https://bigota.d.miui.com/fastboot_degas.zip"
+    )
+
+    def test_detect_os3_hashtag_format(self):
+        """#HyperOS3 (no space) must be detected as OS3."""
+        assert detect_os3(self.SAMPLE_TITLE_ONLY)
+
+    def test_detect_os3_version_line(self):
+        assert detect_os3(self.SAMPLE_FULL_TAIWAN)
+
+    def test_extract_version_hyperos_prefix(self):
+        v = extract_version(self.SAMPLE_FULL_TAIWAN)
+        assert v == "OS3.0.301.0.WNETWXM"
+
+    def test_extract_version_star_format(self):
+        v = extract_version(self.SAMPLE_ROLLOUT)
+        assert v == "OS3.0.303.0.WNOCNXM"
+
+    def test_region_taiwan_from_version_rejected(self):
+        """Taiwan region must not be accepted (returns None from detect_region)."""
+        v = extract_version(self.SAMPLE_FULL_TAIWAN) or ""
+        assert detect_region(self.SAMPLE_FULL_TAIWAN, v) is None
+
+    def test_region_china_from_wnocnxm(self):
+        v = extract_version(self.SAMPLE_FULL_CHINA) or ""
+        assert detect_region(self.SAMPLE_FULL_CHINA, v) == "China"
+
+    def test_codename_from_pipe(self):
+        supported = {"degas", "garnet"}
+        from scan_tech_mukul import _resolve_codename
+        assert _resolve_codename(self.SAMPLE_FULL_CHINA, [], supported) == "degas"
+
+    def test_taiwan_raw_region_for_logging(self):
+        from scan_tech_mukul import _get_raw_region
+        v = extract_version(self.SAMPLE_FULL_TAIWAN) or ""
+        assert _get_raw_region(self.SAMPLE_FULL_TAIWAN, v) == "Taiwan"
+
+    def test_china_raw_region_for_logging(self):
+        from scan_tech_mukul import _get_raw_region
+        v = extract_version(self.SAMPLE_FULL_CHINA) or ""
+        assert _get_raw_region(self.SAMPLE_FULL_CHINA, v) == "China"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Region suffix codes  (CNXM / MIXM / TWXM)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestRegionSuffixCodes:
+    """Requirements 4 + 5 + 13: version suffix → region accept/reject."""
+
+    def test_cnxm_accepted_as_china(self):
+        assert detect_region("", "OS3.0.303.0.WNOCNXM") == "China"
+
+    def test_mixm_accepted_as_global(self):
+        assert detect_region("", "OS3.0.304.0.WNRMIXM") == "Global"
+
+    def test_glxm_accepted_as_global(self):
+        assert detect_region("", "OS3.0.5.0.VHBGLXM") == "Global"
+
+    def test_twxm_rejected(self):
+        assert detect_region("", "OS3.0.301.0.WNETWXM") is None
+
+    def test_euxm_rejected(self):
+        assert detect_region("", "OS3.0.6.0.WNPEUXM") is None
+
+    def test_inxm_rejected(self):
+        assert detect_region("", "OS3.0.5.0.VNAINXM") is None
+
+    def test_idxm_rejected(self):
+        assert detect_region("", "OS3.0.5.0.VNAIDXM") is None
+
+    def test_ruxm_rejected(self):
+        assert detect_region("", "OS3.0.5.0.VNARUXM") is None
+
+    def test_trxm_rejected(self):
+        assert detect_region("", "OS3.0.5.0.VNATRXM") is None
+
+    # Req 13 acceptance / skip scenarios
+    def test_req13_cnxm_accepted(self):
+        """OS3.0.303.0.WNOCNXM → China → accepted."""
+        assert detect_region("", "OS3.0.303.0.WNOCNXM") == "China"
+
+    def test_req13_mixm_accepted(self):
+        """OS3.0.304.0.WNRMIXM → Global → accepted."""
+        assert detect_region("", "OS3.0.304.0.WNRMIXM") == "Global"
+
+    def test_req13_twxm_skipped(self):
+        """OS3.0.301.0.WNETWXM → Taiwan → skipped (None)."""
+        assert detect_region("", "OS3.0.301.0.WNETWXM") is None
+
+    def test_req13_twxm_raw_region_logged_as_taiwan(self):
+        from scan_tech_mukul import _get_raw_region
+        assert _get_raw_region("", "OS3.0.301.0.WNETWXM") == "Taiwan"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  classify_post: no_download_links (req 7)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestClassifyPostNoLinks:
+    """Short alert posts (no download links) must return no_download_links."""
+
+    SUPPORTED = {"degas", "garnet", "zircon"}
+
+    def _make_post(self, text: str, links: list[str] | None = None) -> dict:
+        return {
+            "post_num": 1,
+            "post_url": "https://t.me/TECH_MUKUL/1",
+            "text": text,
+            "text_raw": text,
+            "links": links or [],
+            "datetime": "",
+        }
+
+    def test_title_only_post_no_links(self):
+        from scan_tech_mukul import classify_post
+        post = self._make_post(
+            "#Xiaomi14T #HyperOS3 Update Released | #Degas #China"
+        )
+        reason, _ = classify_post(post, self.SUPPORTED)
+        assert reason == "no_download_links"
+
+    def test_title_only_not_missing_version(self):
+        from scan_tech_mukul import classify_post
+        post = self._make_post(
+            "#Xiaomi14T #HyperOS3 Update Released | #Degas #China"
+        )
+        reason, _ = classify_post(post, self.SUPPORTED)
+        assert reason != "missing_version"
+        assert reason != "missing_codename"
+
+    def test_post_with_links_not_no_download(self):
+        from scan_tech_mukul import classify_post
+        post = self._make_post(
+            "#garnet #HyperOS3 Update Released | #garnet #China\n"
+            "┌ HyperOS 3: OS3.0.303.0.WNOCNXM\n"
+            "➤ Fastboot ROM https://bigota.d.miui.com/fastboot_garnet.zip",
+            links=["https://bigota.d.miui.com/fastboot_garnet.zip"],
+        )
+        reason, _ = classify_post(post, self.SUPPORTED)
+        assert reason != "no_download_links"
