@@ -16,6 +16,11 @@ set -euo pipefail
 work_dir=$(pwd)
 source "$work_dir/functions.sh"
 
+if [ "${ENABLE_DEADZONE_FRAMEWORK_PATCHER:-false}" != "true" ]; then
+    mods "[DeadZone_FrameworkPatcher] Disabled temporarily — skipping Signature Verification Bypass + invoke-custom"
+    exit 0
+fi
+
 mods "DeadZone Framework Patcher — Signature Verification Bypass + invoke-custom"
 
 python3 "$work_dir/bin/scripts/deadzone_framework_patcher.py"

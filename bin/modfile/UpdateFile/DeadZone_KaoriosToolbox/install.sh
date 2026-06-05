@@ -20,6 +20,11 @@ set -euo pipefail
 work_dir=$(pwd)
 source "$work_dir/functions.sh"
 
+if [ "${ENABLE_DEADZONE_KAORIOS_TOOLBOX:-false}" != "true" ]; then
+    mods "[DeadZone_KaoriosToolbox] Disabled temporarily — skipping Kaorios Toolbox integration"
+    exit 0
+fi
+
 mods "DeadZone Kaorios Toolbox — Integrating V2.0.4 as base feature"
 
 python3 "$work_dir/bin/scripts/deadzone_kaorios_toolbox.py"

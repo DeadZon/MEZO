@@ -14,25 +14,29 @@ from pathlib import Path
 WORK_DIR    = Path(__file__).parent.parent.parent
 REPORTS_DIR = WORK_DIR / "output" / "reports"
 
-# Feature flag defaults
+# Feature flag defaults — all new framework/JAR/Kaorios mods temporarily disabled
 _FLAGS: dict[str, tuple[str, bool]] = {
     # (env_var, default_enabled)
-    "ENABLE_SIGNATURE_VERIFICATION_BYPASS": ("ENABLE_SIGNATURE_VERIFICATION_BYPASS", True),
-    "ENABLE_INVOKE_CUSTOM":                 ("ENABLE_INVOKE_CUSTOM",                 True),
-    "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      ("ENABLE_DEADZONE_KAORIOS_TOOLBOX",      True),
+    "ENABLE_DEADZONE_FRAMEWORK_PATCHER":    ("ENABLE_DEADZONE_FRAMEWORK_PATCHER",    False),
+    "ENABLE_SIGNATURE_VERIFICATION_BYPASS": ("ENABLE_SIGNATURE_VERIFICATION_BYPASS", False),
+    "ENABLE_INVOKE_CUSTOM":                 ("ENABLE_INVOKE_CUSTOM",                 False),
+    "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      ("ENABLE_DEADZONE_KAORIOS_TOOLBOX",      False),
     "ENABLE_DEADZONE_JAR_MODS":             ("ENABLE_DEADZONE_JAR_MODS",             False),
     "ENABLE_DEADZONE_MEZO_FRAMEWORK_MODS":  ("ENABLE_DEADZONE_MEZO_FRAMEWORK_MODS",  False),
     "ENABLE_MYMEZO_DERIVED_PATCHES":        ("ENABLE_MYMEZO_DERIVED_PATCHES",        False),
+    "ENABLE_EXPERIMENTAL_JAR_PATCH_ENGINE": ("ENABLE_EXPERIMENTAL_JAR_PATCH_ENGINE", False),
 }
 
 # Human-readable labels for each flag
 _LABELS: dict[str, str] = {
+    "ENABLE_DEADZONE_FRAMEWORK_PATCHER":    "DeadZone_FrameworkPatcher",
     "ENABLE_SIGNATURE_VERIFICATION_BYPASS": "Signature Verification Bypass",
     "ENABLE_INVOKE_CUSTOM":                 "invoke-custom handling",
     "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      "DeadZone_KaoriosToolbox",
     "ENABLE_DEADZONE_JAR_MODS":             "DeadZone_JarMods",
     "ENABLE_DEADZONE_MEZO_FRAMEWORK_MODS":  "DeadZone_MEZOFramework",
     "ENABLE_MYMEZO_DERIVED_PATCHES":        "MyMezo-derived patches",
+    "ENABLE_EXPERIMENTAL_JAR_PATCH_ENGINE": "experimental JAR patch engine",
 }
 
 
@@ -76,10 +80,10 @@ def write_report() -> None:
     lines += [
         "",
         "Notes:",
-        "  - DeadZone_FrameworkPatcher always runs (Signature Verification Bypass + invoke-custom).",
-        "  - DeadZone_KaoriosToolbox always runs (base feature for both Stable and Legend).",
-        "  - DeadZone_JarMods and DeadZone_MEZOFramework are temporarily disabled.",
-        "    Code and checks are preserved. Set ENABLE_DEADZONE_JAR_MODS=true to re-enable.",
+        "  - All new framework/JAR/Kaorios mods are temporarily disabled (default=false).",
+        "  - No Python patchers, JAR decode/rebuild, or APK/XML installs will run.",
+        "  - To re-enable a mod set its flag to true, e.g. ENABLE_DEADZONE_FRAMEWORK_PATCHER=true.",
+        "  - Old normal mods (OS1/OS2/OS3, Universal, existing UpdateFile mods) are unaffected.",
     ]
 
     out = REPORTS_DIR / "active_mods_report.txt"

@@ -1,20 +1,29 @@
 DeadZone Active Mods Report
 ========================================
-Generated : 2026-06-05 18:08:33 UTC
-DZ_STYLE  : Stable
+Generated : 2026-06-05 (manually updated)
+DZ_STYLE  : Stable / Legend
 
-Enabled (3):
-  [ON]  Signature Verification Bypass
-  [ON]  invoke-custom handling
-  [ON]  DeadZone_KaoriosToolbox
+Enabled (0):
+  (none — all new framework/JAR/Kaorios mods are temporarily disabled)
 
-Temporarily disabled (3):
+Temporarily disabled (8):
+  [OFF] DeadZone_FrameworkPatcher
+  [OFF] Signature Verification Bypass
+  [OFF] invoke-custom handling
+  [OFF] DeadZone_KaoriosToolbox
   [OFF] DeadZone_JarMods
   [OFF] DeadZone_MEZOFramework
   [OFF] MyMezo-derived patches
+  [OFF] experimental JAR patch engine
 
 Notes:
-  - DeadZone_FrameworkPatcher always runs (Signature Verification Bypass + invoke-custom).
-  - DeadZone_KaoriosToolbox always runs (base feature for both Stable and Legend).
-  - DeadZone_JarMods and DeadZone_MEZOFramework are temporarily disabled.
-    Code and checks are preserved. Set ENABLE_DEADZONE_JAR_MODS=true to re-enable.
+  - All new framework/JAR/Kaorios mods are temporarily disabled (default=false).
+  - No Python patchers, JAR decode/rebuild, or APK/XML installs will run.
+  - No Signature Verification Bypass, invoke-custom, or Kaorios integration active.
+  - No JAR (framework.jar / services.jar / miui-services.jar) will be touched.
+  - Old normal mods (OS1/OS2/OS3, Universal, existing UpdateFile mods) are unaffected.
+  - Final ZIP packaging, MTK/Snapdragon flash scripts, and ROMInformation are unchanged.
+  - To re-enable a mod set its flag to true, e.g.:
+      ENABLE_DEADZONE_FRAMEWORK_PATCHER=true
+      ENABLE_DEADZONE_KAORIOS_TOOLBOX=true
+      ENABLE_DEADZONE_JAR_MODS=true
