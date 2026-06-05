@@ -1,0 +1,183 @@
+name: DeadZone Auto Stable Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Builder mode'
+        required: true
+        default: 'scan_only'
+        type: choice
+        options:
+          - scan_only
+          - build_next
+          - scan_and_build
+      auto_publish:
+        description: 'Publish to Telegram after successful build'
+        type: boolean
+        default: true
+      max_builds:
+        description: 'Maximum builds per run (must be 1)'
+        default: '1'
+
+  schedule:
+    # Auto scan every 6 hours — does not build, only updates queue
+    - cron: '0 */6 * * *'
+
+concurrency:
+  group: deadzone-auto-stable-builder
+  cancel-in-progress: false
+
+jobs:
+  auto_stable_builder:
+    runs-on: ubuntu-latest
+
+    env:
+      PIXELDRAIN_API_KEY:            ${{ secrets.PIXELDRAIN_API_KEY }}
+      TELEGRAM_BOT_TOKEN:            ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_PUBLISH_CHANNEL_ID:   ${{ secrets.TELEGRAM_PUBLISH_CHANNEL_ID }}
+
+    steps:
+      # ── Determine mode ─────────────────────────────────────────────────────
+      - name: Resolve mode
+        id: mode
+        run: |
+          # Scheduled runs always use scan_only
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "mode=scan_only" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Safety: cap max_builds at 1
+          MAX="${{ inputs.max_builds }}"
+          if [ -z "$MAX" ] || [ "$MAX" -gt "1" ] 2>/dev/null; then
+            MAX=1
+          fi
+          echo "max_builds=$MAX" >> "$GITHUB_OUTPUT"
+
+      # ── Disk space (only for build modes) ─────────────────────────────────
+      - name: Maximize build space
+        if: ${{ steps.mode.outputs.mode != 'scan_only' }}
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          root-reserve-mb: 512
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clean runner (build modes only)
+        if: ${{ steps.mode.outputs.mode != 'scan_only' }}
+        run: |
+          docker rmi $(docker images -q) || true
+          sudo rm -rf /usr/share/dotnet /etc/mysql /etc/php || true
+          sudo apt -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* || true
+          sudo apt -y autoremove --purge || true
+          sudo apt clean || true
+
+      - name: Set timezone
+        run: sudo timedatectl set-timezone Africa/Cairo
+
+      - name: Install OpenJDK (build modes only)
+        if: ${{ steps.mode.outputs.mode != 'scan_only' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Checkout repository
+        uses: actions/checkout@main
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3 python3-pip curl wget 2>/dev/null || true
+          if [ "${{ steps.mode.outputs.mode }}" != "scan_only" ]; then
+            sudo bash setup.sh
+            sudo apt-get install -y unrar p7zip-full 2>/dev/null || true
+          fi
+
+      - name: Set permissions
+        if: ${{ steps.mode.outputs.mode != 'scan_only' }}
+        run: sudo chmod 777 -R *
+
+      - name: Create output directories
+        run: |
+          mkdir -p output/queue output/state output/reports output/logs
+          # Initialise queue/state files if absent
+          [ -f output/queue/auto_build_queue.json ] || echo '[]' > output/queue/auto_build_queue.json
+          [ -f output/state/built_releases.json ]  || echo '{"built":[],"records":[]}' > output/state/built_releases.json
+
+      # ── Restore persisted queue / state from cache ─────────────────────────
+      - name: Restore queue cache
+        id: queue_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            output/queue/auto_build_queue.json
+            output/state/built_releases.json
+          key: deadzone-auto-queue-${{ github.run_id }}
+          restore-keys: |
+            deadzone-auto-queue-
+
+      # ══════════════════════════════════════════════════════════════════════
+      #  SCAN
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Scan TECH_MUKUL
+        if: ${{ steps.mode.outputs.mode == 'scan_only' || steps.mode.outputs.mode == 'scan_and_build' }}
+        run: python3 scripts/scan_tech_mukul.py
+
+      # ══════════════════════════════════════════════════════════════════════
+      #  BUILD
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Validate queue item
+        if: ${{ steps.mode.outputs.mode == 'build_next' || steps.mode.outputs.mode == 'scan_and_build' }}
+        run: python3 scripts/build_next_stable.py --validate-only
+
+      - name: Build ROM (build.sh)
+        id: build_sh
+        if: ${{ steps.mode.outputs.mode == 'build_next' || steps.mode.outputs.mode == 'scan_and_build' }}
+        run: |
+          # build_next_stable.py orchestrates the full pipeline
+          python3 scripts/build_next_stable.py
+
+      # ══════════════════════════════════════════════════════════════════════
+      #  PUBLISH
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Publish to Telegram
+        if: >
+          (steps.mode.outputs.mode == 'build_next' || steps.mode.outputs.mode == 'scan_and_build') &&
+          success() &&
+          (github.event_name != 'workflow_dispatch' || inputs.auto_publish == true)
+        run: |
+          if [ ! -f "assets/telegram/stable_release.jpg" ]; then
+            echo "::warning::assets/telegram/stable_release.jpg is missing — skipping publish"
+            echo "[PUBLIC_PUBLISH_SKIPPED] reason=image_not_found"
+            exit 0
+          fi
+          python3 scripts/publish_stable_release.py
+
+      # ══════════════════════════════════════════════════════════════════════
+      #  ARTIFACTS  (reports + logs + queue/state only — no ROM ZIPs)
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Upload reports and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadzone-auto-stable-reports-${{ github.run_number }}
+          path: |
+            output/reports/**
+            output/logs/**
+            output/queue/**
+            output/state/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ── Cleanup build workspace ────────────────────────────────────────────
+      - name: Cleanup build workspace
+        if: always()
+        run: |
+          sudo rm -rf "${{ github.workspace }}/out"   || true
+          sudo rm -rf "${{ github.workspace }}/build" || true
+          rm -f /tmp/tg_watch_stop /tmp/mezo_build.log /tmp/mezo_pack.log /tmp/mezo_package.log || true
