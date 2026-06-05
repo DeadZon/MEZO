@@ -36,6 +36,7 @@ from _common import (
     format_publish_date, format_hyperos_version, format_os_tag,
     _now_iso, log,
 )
+from prune_queue import prune_queue
 
 REPORT_FILE = REPORTS_DIR / "auto_stable_builder_report.txt"
 BUILD_LOG   = LOGS_DIR / "build_next_stable.log"
@@ -299,6 +300,11 @@ def run_build(validate_only: bool = False) -> int:
         log("BUILD_FAILED", reason="no_supported_devices")
         return 1
 
+    # Prune stale/invalid items before selecting — catches entries that were
+    # queued before the version-suffix region fix (e.g. TWXM stored as Global).
+    prune_queue(supported=supported)
+
+    # Reload queue after pruning so the selection loop sees the clean state.
     queue = load_queue()
     if not queue:
         log("QUEUE_EMPTY")

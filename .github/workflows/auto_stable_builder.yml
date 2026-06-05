@@ -22,6 +22,10 @@ on:
       scan_pages:
         description: 'Number of TECH_MUKUL pages to scan (default 5)'
         default: '5'
+      reset_queue:
+        description: 'Clear the queue before scanning (removes all pending items)'
+        type: boolean
+        default: false
 
   schedule:
     # Auto scan every 6 hours — does not build, only updates queue
@@ -113,6 +117,7 @@ jobs:
           [ -f output/state/built_releases.json ]  || echo '{"built":[],"records":[]}' > output/state/built_releases.json
 
       # ── Restore persisted queue / state from cache ─────────────────────────
+      # v2-cn-global-only prefix ensures old pre-suffix-fix caches are never restored
       - name: Restore queue cache
         id: queue_cache
         uses: actions/cache@v4
@@ -120,9 +125,16 @@ jobs:
           path: |
             output/queue/auto_build_queue.json
             output/state/built_releases.json
-          key: deadzone-auto-queue-${{ github.run_id }}
+          key: deadzone-auto-queue-v2-cn-global-only-${{ github.run_id }}
           restore-keys: |
-            deadzone-auto-queue-
+            deadzone-auto-queue-v2-cn-global-only-
+
+      # ── Reset queue when explicitly requested ──────────────────────────────
+      - name: Reset queue (reset_queue=true)
+        if: ${{ inputs.reset_queue == true }}
+        run: |
+          echo '[]' > output/queue/auto_build_queue.json
+          echo "[QUEUE_RESET] Queue cleared — reset_queue=true"
 
       # ══════════════════════════════════════════════════════════════════════
       #  SCAN
@@ -133,6 +145,12 @@ jobs:
           PAGES="${{ inputs.scan_pages }}"
           [ -z "$PAGES" ] && PAGES=5
           python3 scripts/scan_tech_mukul.py --scan-pages "$PAGES"
+
+      # ══════════════════════════════════════════════════════════════════════
+      #  PRUNE  — always run, removes stale/invalid items from the queue
+      # ══════════════════════════════════════════════════════════════════════
+      - name: Prune stale queue items
+        run: python3 scripts/prune_queue.py
 
       # ══════════════════════════════════════════════════════════════════════
       #  BUILD

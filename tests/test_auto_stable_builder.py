@@ -1017,3 +1017,218 @@ class TestBuildValidateVersionSuffix:
         ok, reason = validate_item(self._item("OS3.0.303.0.WPAMIXM", "China"), self.SUPPORTED)
         assert not ok
         assert "mismatch" in reason
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Queue pruning  (prune_queue.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestQueuePruning:
+    """prune_queue() removes invalid items; valid ones survive."""
+
+    SUPPORTED = {"garnet", "zircon", "degas", "marble"}
+
+    def _item(
+        self,
+        version: str,
+        region: str,
+        codename: str = "garnet",
+        status: str = "queued",
+    ) -> dict:
+        return {
+            "id":       f"{codename}_{version}_{region}",
+            "style":    "Stable",
+            "os_tag":   "OS3.0",
+            "version":  version,
+            "region":   region,
+            "codename": codename,
+            "rom_url":  "https://bigota.d.miui.com/test.zip",
+            "rom_type": "fastboot",
+            "status":   status,
+        }
+
+    # ── validate_for_prune unit tests ─────────────────────────────────────────
+
+    def test_cnxm_china_valid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.313.0.WPBCNXM", "China"), self.SUPPORTED
+        )
+        assert ok, reason
+
+    def test_mixm_global_valid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.303.0.WPAMIXM", "Global"), self.SUPPORTED
+        )
+        assert ok, reason
+
+    def test_twxm_global_invalid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.302.0.WOZTWXM", "Global"), self.SUPPORTED
+        )
+        assert not ok
+        assert reason in ("unsupported_version_suffix", "region_suffix_mismatch")
+
+    def test_ruxm_global_invalid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.302.0.WOZRUXM", "Global"), self.SUPPORTED
+        )
+        assert not ok
+
+    def test_euxm_global_invalid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.301.0.WMCEUXM", "Global"), self.SUPPORTED
+        )
+        assert not ok
+
+    def test_trxm_global_invalid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.303.0.WOYTRXM", "Global"), self.SUPPORTED
+        )
+        assert not ok
+
+    def test_unsupported_device_invalid(self):
+        from prune_queue import validate_for_prune
+        ok, reason = validate_for_prune(
+            self._item("OS3.0.313.0.WPBCNXM", "China", codename="unknowndevice"),
+            self.SUPPORTED,
+        )
+        assert not ok
+        assert reason == "unsupported_device"
+
+    # ── prune_queue integration tests ─────────────────────────────────────────
+
+    def test_prune_removes_invalid_keeps_valid(self):
+        from prune_queue import prune_queue
+
+        mixed_queue = [
+            self._item("OS3.0.313.0.WPBCNXM", "China"),          # valid — keep
+            self._item("OS3.0.303.0.WPAMIXM", "Global"),          # valid — keep
+            self._item("OS3.0.302.0.WOZTWXM", "Global"),          # TWXM → remove
+            self._item("OS3.0.302.0.WOZRUXM", "Global"),          # RUXM → remove
+            self._item("OS3.0.301.0.WMCEUXM", "Global"),          # EUXM → remove
+            self._item("OS3.0.303.0.WOYTRXM", "Global"),          # TRXM → remove
+            self._item("OS3.0.313.0.WPBCNXM", "China", codename="unknown"),  # bad device → remove
+        ]
+
+        with _TmpFiles() as td:
+            import _common as cm
+            cm.QUEUE_FILE.write_text(
+                __import__("json").dumps(mixed_queue, indent=2), encoding="utf-8"
+            )
+            result = prune_queue(supported=self.SUPPORTED)
+
+        assert result["before"] == 7
+        assert result["after"]  == 2
+        assert result["removed"] == 5
+
+    def test_prune_count_matches(self):
+        from prune_queue import prune_queue
+
+        items = [
+            self._item("OS3.0.313.0.WPBCNXM", "China"),   # keep
+            self._item("OS3.0.302.0.WOZTWXM", "Global"),  # remove
+            self._item("OS3.0.302.0.WOZRUXM", "Global"),  # remove
+        ]
+
+        with _TmpFiles() as td:
+            import _common as cm
+            cm.QUEUE_FILE.write_text(
+                __import__("json").dumps(items, indent=2), encoding="utf-8"
+            )
+            result = prune_queue(supported=self.SUPPORTED)
+
+        assert result["before"] == 3
+        assert result["after"]  == 1
+        assert result["removed"] == 2
+
+    def test_prune_preserves_built_items(self):
+        """Items with status='built' must never be removed regardless of suffix."""
+        from prune_queue import prune_queue
+
+        items = [
+            self._item("OS3.0.302.0.WOZTWXM", "Global", status="built"),   # keep — already built
+            self._item("OS3.0.302.0.WOZRUXM", "Global", status="queued"),  # remove — stale
+        ]
+
+        with _TmpFiles() as td:
+            import _common as cm
+            cm.QUEUE_FILE.write_text(
+                __import__("json").dumps(items, indent=2), encoding="utf-8"
+            )
+            result = prune_queue(supported=self.SUPPORTED)
+
+        assert result["before"]  == 2
+        assert result["after"]   == 1
+        assert result["removed"] == 1
+
+    def test_prune_preserves_building_items(self):
+        """Items with status='building' must never be removed."""
+        from prune_queue import prune_queue
+
+        items = [
+            self._item("OS3.0.302.0.WOZTWXM", "Global", status="building"),
+        ]
+
+        with _TmpFiles() as td:
+            import _common as cm
+            cm.QUEUE_FILE.write_text(
+                __import__("json").dumps(items, indent=2), encoding="utf-8"
+            )
+            result = prune_queue(supported=self.SUPPORTED)
+
+        assert result["removed"] == 0
+        assert result["after"]   == 1
+
+    def test_prune_dry_run_does_not_modify_file(self):
+        """dry_run=True must not change the queue file."""
+        from prune_queue import prune_queue
+
+        items = [self._item("OS3.0.302.0.WOZTWXM", "Global")]
+
+        with _TmpFiles() as td:
+            import _common as cm
+            import json
+            cm.QUEUE_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
+
+            result = prune_queue(dry_run=True, supported=self.SUPPORTED)
+
+            # File must still contain the original invalid item
+            on_disk = json.loads(cm.QUEUE_FILE.read_text(encoding="utf-8"))
+
+        assert result["removed"] == 1
+        assert len(on_disk) == 1   # unchanged on disk
+
+    def test_all_valid_queue_unchanged(self):
+        """When every item is valid, removed=0 and queue size is unchanged."""
+        from prune_queue import prune_queue
+
+        items = [
+            self._item("OS3.0.313.0.WPBCNXM", "China"),
+            self._item("OS3.0.303.0.WPAMIXM", "Global"),
+        ]
+
+        with _TmpFiles() as td:
+            import _common as cm
+            cm.QUEUE_FILE.write_text(
+                __import__("json").dumps(items, indent=2), encoding="utf-8"
+            )
+            result = prune_queue(supported=self.SUPPORTED)
+
+        assert result["removed"] == 0
+        assert result["before"]  == result["after"] == 2
+
+    def test_empty_queue_no_error(self):
+        from prune_queue import prune_queue
+
+        with _TmpFiles():
+            import _common as cm
+            cm.QUEUE_FILE.write_text("[]", encoding="utf-8")
+            result = prune_queue(supported=self.SUPPORTED)
+
+        assert result == {"before": 0, "after": 0, "removed": 0}
