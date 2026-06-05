@@ -33,9 +33,10 @@ from _common import (
     load_supported_codenames, get_soc_for_codename, get_device_display_name,
     load_queue, save_queue, is_duplicate, make_queue_id, _now_iso,
     detect_os3, detect_region, detect_stable,
-    extract_version, extract_codename, extract_download_urls,
+    extract_version, extract_version_suffix, extract_codename, extract_download_urls,
     detect_rom_type, extract_android_version,
     format_hyperos_version, format_os_tag, log,
+    VERSION_SUFFIX_REGION, VERSION_SUFFIX_NAMES,
 )
 
 TECH_MUKUL_URL = "https://t.me/s/TECH_MUKUL"
@@ -52,18 +53,7 @@ RECOVERY_PIPELINE_ENABLED = os.environ.get("RECOVERY_PIPELINE", "true").lower() 
 # Stop paginating after this many new queue additions per run
 _PAGINATION_STOP_THRESHOLD = 20
 
-# Region suffix codes for logging (includes unsupported regions)
-_SUFFIX_TO_REGION_NAME: dict[str, str] = {
-    "CN": "China",
-    "MI": "Global",
-    "GL": "Global",
-    "EU": "Europe",
-    "IN": "India",
-    "ID": "Indonesia",
-    "TW": "Taiwan",
-    "TR": "Turkey",
-    "RU": "Russia",
-}
+# _SUFFIX_TO_REGION_NAME is now VERSION_SUFFIX_NAMES imported from _common
 
 _HASHTAG_REGION_MAP: dict[str, str] = {
     "taiwan": "Taiwan",
@@ -219,7 +209,7 @@ def _get_raw_region(text: str, version: str = "") -> str | None:
     Return region name for logging (including unsupported: Taiwan, Turkey, etc.).
     Does NOT apply allowed-regions filter.
     """
-    # 1. Version suffix (most reliable)
+    # 1. Version suffix (most reliable — check text+version combined)
     v_match = re.search(
         r'os3\.\d+\.\d+\.\d+\.([A-Z0-9]{4,})',
         text + " " + version,
@@ -229,8 +219,8 @@ def _get_raw_region(text: str, version: str = "") -> str | None:
         code = v_match.group(1).upper()
         if code.endswith("XM") and len(code) >= 4:
             rc = code[-4:-2]
-            if rc in _SUFFIX_TO_REGION_NAME:
-                return _SUFFIX_TO_REGION_NAME[rc]
+            if rc in VERSION_SUFFIX_NAMES:
+                return VERSION_SUFFIX_NAMES[rc]
 
     # 2. Hashtag after pipe: '| #Codename #Region'
     _, region_tag = _extract_post_after_pipe(text)
@@ -240,21 +230,91 @@ def _get_raw_region(text: str, version: str = "") -> str | None:
     # 3. Explicit region hashtag anywhere in text
     for tag in re.findall(r'#(\w+)', text.lower()):
         if tag in _HASHTAG_REGION_MAP:
-            r = _HASHTAG_REGION_MAP[tag]
-            # Skip generic OS tags that overlap with region names (none currently)
-            return r
+            return _HASHTAG_REGION_MAP[tag]
 
     # 4. Text keyword fallback
     t = text.lower()
     for name, kw in [
         ("Taiwan", "taiwan"), ("China", "china"), ("Global", "global"),
         ("India", "india"), ("Indonesia", "indonesia"), ("Turkey", "turkey"),
-        ("Russia", "russia"),
+        ("Russia", "russia"), ("Japan", "japan"),
     ]:
         if kw in t:
             return name
 
     return None
+
+
+def _get_source_region(text: str) -> str | None:
+    """
+    Return region from text/hashtags ONLY — no version suffix.
+    Used for source_region in scan report (what the post claims).
+    """
+    # Hashtag after pipe
+    _, region_tag = _extract_post_after_pipe(text)
+    if region_tag and region_tag in _HASHTAG_REGION_MAP:
+        return _HASHTAG_REGION_MAP[region_tag]
+    # Any region hashtag
+    for tag in re.findall(r'#(\w+)', text.lower()):
+        if tag in _HASHTAG_REGION_MAP:
+            return _HASHTAG_REGION_MAP[tag]
+    # Text keywords
+    t = text.lower()
+    for name, kw in [
+        ("China", "china"), ("Global", "global"), ("Taiwan", "taiwan"),
+        ("India", "india"), ("Indonesia", "indonesia"), ("Turkey", "turkey"),
+        ("Russia", "russia"), ("Europe", "europe"), ("Japan", "japan"),
+    ]:
+        if kw in t:
+            return name
+    return None
+
+
+def _classify_region_detail(text: str, version: str) -> dict:
+    """
+    Return a full region classification dict for logging/reporting.
+
+    Fields:
+      source_region       — region from title/hashtags only (what post claims)
+      version_region      — human name from version suffix (authoritative)
+      version_suffix      — 4-char suffix string e.g. 'TWXM' (or None)
+      final_region        — region used for queue/reject decision (None = rejected)
+      region_decision_source — 'version_suffix' | 'source_text'
+    """
+    # Find version string in text or version arg
+    v_str = version or ""
+    v_match = re.search(
+        r'os3\.\d+\.\d+\.\d+\.([A-Z0-9]{4,})',
+        text + " " + v_str,
+        re.IGNORECASE,
+    )
+
+    source_region = _get_source_region(text)
+
+    if v_match:
+        code = v_match.group(1).upper()
+        if code.endswith("XM") and len(code) >= 4:
+            rc = code[-4:-2]
+            version_suffix_4 = rc + "XM"
+            version_region   = VERSION_SUFFIX_NAMES.get(rc, f"unknown({rc})")
+            final_region     = VERSION_SUFFIX_REGION.get(rc)   # None = rejected
+            return {
+                "source_region":        source_region,
+                "version_region":       version_region,
+                "version_suffix":       version_suffix_4,
+                "final_region":         final_region,
+                "region_decision_source": "version_suffix",
+            }
+
+    # No XM suffix found — fall back to text
+    final_region = detect_region(text, version)
+    return {
+        "source_region":        source_region,
+        "version_region":       None,
+        "version_suffix":       None,
+        "final_region":         final_region,
+        "region_decision_source": "source_text",
+    }
 
 
 def _resolve_codename(text: str, links: list[str], supported: set[str]) -> str | None:
@@ -385,6 +445,7 @@ def build_queue_item(post: dict, supported: set[str]) -> dict | None:
     os_tag    = format_os_tag(version)
     hyperos_v = format_hyperos_version(version)
 
+    suffix = extract_version_suffix(version)
     return {
         "id":              make_queue_id(codename, version, region),
         "source":          SOURCE_NAME,
@@ -393,6 +454,7 @@ def build_queue_item(post: dict, supported: set[str]) -> dict | None:
         "device_name":     dev_name,
         "soc":             soc,
         "version":         version,
+        "version_suffix":  (suffix + "XM") if suffix else None,
         "region":          region,
         "android":         android,
         "os_tag":          os_tag,
@@ -431,19 +493,33 @@ def _write_report(summary_lines: list[str], post_details: list[dict]) -> None:
         for d in post_details:
             lines.append(f"\nPOST: {d['post_url']}")
             if d.get("title"):
-                lines.append(f"  Title:    {d['title'][:120]}")
-            for field in ("codename", "region", "version", "android", "rom_type"):
-                val = d.get(field)
-                if val:
-                    lines.append(f"  {field.capitalize():<10}{val}")
+                lines.append(f"  Title:           {d['title'][:120]}")
+            if d.get("codename"):
+                lines.append(f"  Codename:        {d['codename']}")
+            if d.get("version"):
+                lines.append(f"  Version:         {d['version']}")
+            if d.get("android"):
+                lines.append(f"  Android:         {d['android']}")
+            # Region detail
+            src  = d.get("source_region") or ""
+            vr   = d.get("version_region") or ""
+            vsuf = d.get("version_suffix") or ""
+            fr   = d.get("final_region") or ""
+            dsrc = d.get("region_decision_source") or ""
+            if src or vr:
+                lines.append(f"  source_region:   {src or '(none)'}")
+                lines.append(f"  version_region:  {vr or '(none)'}  suffix={vsuf or 'n/a'}")
+                lines.append(f"  final_region:    {fr or 'rejected'}  decision={dsrc}")
+            if d.get("rom_type"):
+                lines.append(f"  ROM type:        {d['rom_type']}")
             if d.get("rom_url"):
-                lines.append(f"  ROM URL:  {d['rom_url']}")
-            status = d.get("status", "")
+                lines.append(f"  ROM URL:         {d['rom_url']}")
             reason = d.get("reason", "")
+            status = d.get("status", "")
             if reason:
-                lines.append(f"  Status:   SKIPPED reason={reason}")
+                lines.append(f"  Status:          SKIPPED reason={reason}")
             else:
-                lines.append(f"  Status:   {status}")
+                lines.append(f"  Status:          {status}")
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"[SCAN] Report written to {path}")
@@ -514,15 +590,21 @@ def run_scan(dry_run: bool = False, max_posts: int = 0, scan_pages: int = 5) -> 
         version  = extract_version(text)
         region   = detect_region(text, version or "")
         codename = _resolve_codename(text, post["links"], supported)
-        raw_region = _get_raw_region(text, version or "")
+        rd       = _classify_region_detail(text, version or "")
 
         pdetail: dict = {
-            "post_url": post_url,
-            "title":    title_line,
-            "codename": codename,
-            "region":   raw_region or region,
-            "version":  version,
-            "android":  extract_android_version(text),
+            "post_url":              post_url,
+            "title":                 title_line,
+            "codename":              codename,
+            "version":               version,
+            "android":               extract_android_version(text),
+            "source_region":         rd["source_region"],
+            "version_region":        rd["version_region"],
+            "version_suffix":        rd["version_suffix"],
+            "final_region":          rd["final_region"],
+            "region_decision_source": rd["region_decision_source"],
+            # "region" key kept for backward-compat (same as final_region)
+            "region": rd["final_region"] or rd["source_region"],
         }
 
         # Check already built
@@ -543,8 +625,13 @@ def run_scan(dry_run: bool = False, max_posts: int = 0, scan_pages: int = 5) -> 
         reason, _ = classify_post(post, supported)
         if reason:
             log_kwargs: dict = {"post": post_url, "reason": reason}
-            if reason == "unsupported_region" and raw_region:
-                log_kwargs["region"] = raw_region
+            if reason == "unsupported_region":
+                if rd["source_region"]:
+                    log_kwargs["source_region"] = rd["source_region"]
+                if rd["version_region"]:
+                    log_kwargs["version_region"] = rd["version_region"]
+                if rd["version_suffix"]:
+                    log_kwargs["suffix"] = rd["version_suffix"]
             log("SCAN_SKIPPED", **log_kwargs)
             detail_log.append(f"  SKIP: {reason}")
             pdetail["reason"] = reason

@@ -32,6 +32,7 @@ from _common import (
     load_queue, save_queue, load_state, save_state,
     is_duplicate, mark_built, make_queue_id,
     detect_os3, detect_region, detect_stable,
+    extract_version_suffix, VERSION_SUFFIX_REGION, VERSION_SUFFIX_NAMES,
     format_publish_date, format_hyperos_version, format_os_tag,
     _now_iso, log,
 )
@@ -51,12 +52,30 @@ def validate_item(item: dict, supported: set[str]) -> tuple[bool, str]:
     region = item.get("region", "")
     if region not in ("China", "Global"):
         return False, f"unsupported_region:{region}"
+
+    # Guard: validate version suffix is authoritative and allowed.
+    # Catches items queued before the suffix-priority fix (e.g. TWXM queued as Global).
+    version = item.get("version", "")
+    if version:
+        suffix = extract_version_suffix(version)
+        if suffix is not None:
+            allowed_region = VERSION_SUFFIX_REGION.get(suffix)
+            if allowed_region is None:
+                region_name = VERSION_SUFFIX_NAMES.get(suffix, f"unknown({suffix})")
+                return False, f"unsupported_version_suffix:{suffix}XM({region_name})"
+            if allowed_region != region:
+                return False, (
+                    f"region_suffix_mismatch:"
+                    f"queued={region},"
+                    f"suffix={suffix}XM({allowed_region})"
+                )
+
     codename = item.get("codename", "")
     if not codename or codename not in supported:
         return False, f"unsupported_device:{codename}"
     if not item.get("rom_url"):
         return False, "missing_rom_url"
-    if is_duplicate(codename, item.get("version", ""), region, item.get("rom_url", "")):
+    if is_duplicate(codename, version, region, item.get("rom_url", "")):
         return False, "already_built"
     return True, ""
 

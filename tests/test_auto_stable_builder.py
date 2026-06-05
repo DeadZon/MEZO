@@ -463,7 +463,7 @@ class TestPostParser:
 
     SAMPLE_POST_GLOBAL = """
     Xiaomi 14 (aurora) | HyperOS 3 Global Stable
-    Version OS3.0.5.0.WNOEAXM
+    Version OS3.0.5.0.WNOMIXM
     Recovery ROM: https://bigota.d.miui.com/aurora_OS3.0.5.0.tgz
     #aurora #OS3 #HyperOS3 #Global
     """
@@ -773,3 +773,247 @@ class TestClassifyPostNoLinks:
         )
         reason, _ = classify_post(post, self.SUPPORTED)
         assert reason != "no_download_links"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Version suffix priority (the core fix for TWXM/RUXM/EUXM/TRXM queued Global)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVersionSuffixPriority:
+    """Version suffix must override title/hashtag region claims."""
+
+    def test_global_title_with_twxm_suffix_is_rejected(self):
+        """#Global in title + TWXM suffix → rejected (Taiwan)."""
+        assert detect_region("#Global HyperOS3 Update", "OS3.0.302.0.WOZTWXM") is None
+
+    def test_global_title_with_ruxm_suffix_is_rejected(self):
+        assert detect_region("#Global HyperOS3 Update", "OS3.0.302.0.WOZRUXM") is None
+
+    def test_global_title_with_euxm_suffix_is_rejected(self):
+        assert detect_region("#Global HyperOS3 Update", "OS3.0.301.0.WMCEUXM") is None
+
+    def test_global_title_with_trxm_suffix_is_rejected(self):
+        assert detect_region("#Global HyperOS3 Update", "OS3.0.303.0.WOYTRXM") is None
+
+    def test_china_title_with_mixm_suffix_returns_global(self):
+        """Version suffix MIXM overrides 'China' text."""
+        assert detect_region("China text", "OS3.0.304.0.WNRMIXM") == "Global"
+
+    def test_known_suffix_never_falls_back_to_text(self):
+        """When suffix is known, text keywords are completely ignored."""
+        # TWXM suffix → None even though text says "Global China"
+        assert detect_region("Global China Stable", "OS3.0.302.0.WOZTWXM") is None
+
+    def test_no_version_falls_back_to_text_global(self):
+        """When no version string at all, text 'Global' still works."""
+        assert detect_region("HyperOS 3 Global Stable") == "Global"
+
+    def test_no_version_falls_back_to_text_china(self):
+        assert detect_region("HyperOS 3 China Stable") == "China"
+
+    def test_unknown_xm_suffix_rejected(self):
+        """Unknown XM suffix (e.g. EA) must be rejected — never falls to text."""
+        assert detect_region("Global Stable", "OS3.0.5.0.WNOEAXM") is None
+
+    def test_jpxm_rejected(self):
+        assert detect_region("", "OS3.0.5.0.VNAJPXM") is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  extract_version_suffix
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractVersionSuffix:
+    from _common import extract_version_suffix as _evs
+
+    def test_cnxm(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.303.0.WNOCNXM") == "CN"
+
+    def test_mixm(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.304.0.WNRMIXM") == "MI"
+
+    def test_twxm(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.302.0.WOZTWXM") == "TW"
+
+    def test_ruxm(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.302.0.WOZRUXM") == "RU"
+
+    def test_euxm(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.301.0.WMCEUXM") == "EU"
+
+    def test_trxm(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.303.0.WOYTRXM") == "TR"
+
+    def test_no_xm_suffix_returns_none(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("OS3.0.5.0") is None
+
+    def test_empty_returns_none(self):
+        from _common import extract_version_suffix
+        assert extract_version_suffix("") is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Req 8: acceptance / rejection matrix
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestReq8AcceptanceMatrix:
+    """Verify every acceptance/rejection case from requirement 8."""
+
+    def test_wpbcnxm_accepted_china(self):
+        assert detect_region("", "OS3.0.313.0.WPBCNXM") == "China"
+
+    def test_wpamixm_accepted_global(self):
+        assert detect_region("", "OS3.0.303.0.WPAMIXM") == "Global"
+
+    def test_wmceuxm_rejected_europe(self):
+        assert detect_region("", "OS3.0.301.0.WMCEUXM") is None
+
+    def test_woztwxm_rejected_taiwan(self):
+        assert detect_region("", "OS3.0.302.0.WOZTWXM") is None
+
+    def test_wozruxm_rejected_russia(self):
+        assert detect_region("", "OS3.0.302.0.WOZRUXM") is None
+
+    def test_woytrxm_rejected_turkey(self):
+        assert detect_region("", "OS3.0.303.0.WOYTRXM") is None
+
+    def test_global_title_twxm_suffix_still_rejected(self):
+        """Title #Global + TWXM → region must still be rejected."""
+        text = "#Xiaomi14T #HyperOS3 Update Released | #Degas #Global"
+        assert detect_region(text, "OS3.0.302.0.WOZTWXM") is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  _classify_region_detail fields  (req 6)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestClassifyRegionDetail:
+    """scan_report fields: source_region, version_region, version_suffix, etc."""
+
+    def setup_method(self):
+        from scan_tech_mukul import _classify_region_detail
+        self._crd = _classify_region_detail
+
+    def test_twxm_detail(self):
+        rd = self._crd(
+            "#Xiaomi14T #HyperOS3 Update Released | #Degas #Global",
+            "OS3.0.302.0.WOZTWXM",
+        )
+        assert rd["source_region"]        == "Global"
+        assert rd["version_region"]       == "Taiwan"
+        assert rd["version_suffix"]       == "TWXM"
+        assert rd["final_region"]         is None
+        assert rd["region_decision_source"] == "version_suffix"
+
+    def test_cnxm_detail(self):
+        rd = self._crd(
+            "#Xiaomi14T #HyperOS3 Update Released | #Degas #China",
+            "OS3.0.303.0.WNOCNXM",
+        )
+        assert rd["source_region"]        == "China"
+        assert rd["version_region"]       == "China"
+        assert rd["version_suffix"]       == "CNXM"
+        assert rd["final_region"]         == "China"
+        assert rd["region_decision_source"] == "version_suffix"
+
+    def test_mixm_detail(self):
+        rd = self._crd(
+            "#Xiaomi14T #HyperOS3 Update Released | #Degas #Global",
+            "OS3.0.304.0.WNRMIXM",
+        )
+        assert rd["version_region"]  == "Global"
+        assert rd["version_suffix"]  == "MIXM"
+        assert rd["final_region"]    == "Global"
+
+    def test_ruxm_source_global_version_russia(self):
+        """source_region=Global but version=Russia → final_region rejected."""
+        rd = self._crd(
+            "Update Released #Global",
+            "OS3.0.302.0.WOZRUXM",
+        )
+        assert rd["source_region"]  == "Global"
+        assert rd["version_region"] == "Russia"
+        assert rd["version_suffix"] == "RUXM"
+        assert rd["final_region"]   is None
+
+    def test_no_version_fallback(self):
+        rd = self._crd("HyperOS 3 China Stable", "")
+        assert rd["version_suffix"]       is None
+        assert rd["region_decision_source"] == "source_text"
+        assert rd["final_region"]         == "China"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  build_next_stable.py: validate_item version-suffix guard  (req 9 + 10)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBuildValidateVersionSuffix:
+    """Queued items with unsupported version suffix must be rejected by builder."""
+
+    SUPPORTED = {"degas", "garnet", "zircon"}
+
+    def _item(self, version: str, region: str, codename: str = "garnet") -> dict:
+        return {
+            "id":       f"{codename}_{version}_{region}",
+            "style":    "Stable",
+            "os_tag":   "OS3.0",
+            "version":  version,
+            "region":   region,
+            "codename": codename,
+            "rom_url":  "https://bigota.d.miui.com/test.zip",
+            "rom_type": "fastboot",
+            "status":   "queued",
+        }
+
+    def test_cnxm_passes(self):
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.313.0.WPBCNXM", "China"), self.SUPPORTED)
+        assert ok, reason
+
+    def test_mixm_passes(self):
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.303.0.WPAMIXM", "Global"), self.SUPPORTED)
+        assert ok, reason
+
+    def test_twxm_queued_as_global_is_rejected(self):
+        """Simulates item queued before fix: region=Global but TWXM suffix."""
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.302.0.WOZTWXM", "Global"), self.SUPPORTED)
+        assert not ok
+        assert "unsupported_version_suffix" in reason or "region_suffix_mismatch" in reason
+
+    def test_ruxm_queued_as_global_is_rejected(self):
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.302.0.WOZRUXM", "Global"), self.SUPPORTED)
+        assert not ok
+
+    def test_euxm_queued_as_global_is_rejected(self):
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.301.0.WMCEUXM", "Global"), self.SUPPORTED)
+        assert not ok
+
+    def test_trxm_queued_as_global_is_rejected(self):
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.303.0.WOYTRXM", "Global"), self.SUPPORTED)
+        assert not ok
+
+    def test_cnxm_queued_as_global_mismatch_rejected(self):
+        """CNXM (China) queued as Global → mismatch → rejected."""
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.313.0.WPBCNXM", "Global"), self.SUPPORTED)
+        assert not ok
+        assert "mismatch" in reason
+
+    def test_mixm_queued_as_china_mismatch_rejected(self):
+        """MIXM (Global) queued as China → mismatch → rejected."""
+        from build_next_stable import validate_item
+        ok, reason = validate_item(self._item("OS3.0.303.0.WPAMIXM", "China"), self.SUPPORTED)
+        assert not ok
+        assert "mismatch" in reason

@@ -44,6 +44,40 @@ REJECT_STYLE_KEYWORDS = [
     "legend", "gaming", "epic", "paid",
 ]
 
+# ── Version suffix maps (authoritative region source) ──────────────────────────
+# 2-char region code extracted from XM-suffix build numbers.
+# Format: OS3.x.x.x.[3-char model][2-char region]XM
+# e.g. WNOCNXM → model=WNO, region=CN, suffix=XM
+
+# Maps 2-char code → accepted region name (None = unsupported/rejected).
+# Used by detect_region (version suffix is authoritative over text keywords).
+VERSION_SUFFIX_REGION: dict[str, str | None] = {
+    "CN": "China",    # CNXM
+    "MI": "Global",   # MIXM — standard Global
+    "GL": "Global",   # GLXM — legacy Global
+    "EU": None,       # EUXM — Europe
+    "IN": None,       # INXM — India
+    "ID": None,       # IDXM — Indonesia
+    "TW": None,       # TWXM — Taiwan
+    "TR": None,       # TRXM — Turkey
+    "RU": None,       # RUXM — Russia
+    "JP": None,       # JPXM — Japan
+}
+
+# Maps 2-char code → human region name (for logging, includes rejected regions).
+VERSION_SUFFIX_NAMES: dict[str, str] = {
+    "CN": "China",
+    "MI": "Global",
+    "GL": "Global",
+    "EU": "Europe",
+    "IN": "India",
+    "ID": "Indonesia",
+    "TW": "Taiwan",
+    "TR": "Turkey",
+    "RU": "Russia",
+    "JP": "Japan",
+}
+
 # ── Device helpers ─────────────────────────────────────────────────────────────
 
 def load_supported_codenames() -> set[str]:
@@ -180,47 +214,48 @@ def detect_os3(text: str) -> bool:
     return False
 
 
+def extract_version_suffix(version: str) -> str | None:
+    """Extract the 2-char region code from a version suffix ending in XM.
+
+    'OS3.0.302.0.WOZTWXM' → 'TW'
+    'OS3.0.303.0.WNOCNXM' → 'CN'
+    'OS3.0.304.0.WNRMIXM' → 'MI'
+    Returns None when the version contains no XM-style suffix.
+    """
+    m = re.search(r'os3\.\d+\.\d+\.\d+\.([A-Z0-9]{4,})', version, re.IGNORECASE)
+    if m:
+        code = m.group(1).upper()
+        if code.endswith("XM") and len(code) >= 4:
+            return code[-4:-2]
+    return None
+
+
 def detect_region(text: str, version: str = "") -> str | None:
-    """Return 'China', 'Global', or None (unsupported/unknown)."""
-    combined = (text + " " + version).lower()
+    """Return 'China', 'Global', or None (unsupported/unknown).
 
-    # Hard reject first
-    for kw in REJECT_REGION_KEYWORDS:
-        if kw in combined:
-            return None
-
-    # Explicit keywords
-    if "global" in combined:
-        return "Global"
-    if "china" in combined or " cn " in combined or "cn rom" in combined or "cn stable" in combined:
-        return "China"
-
-    # Version string region code analysis
-    # Pattern: OS3.0.303.0.WNOCNXM — the last segment contains region
-    # Format: [3-char model][2-char region]XM  e.g. WNO + CN + XM
-    _SUFFIX_REGION: dict[str, str | None] = {
-        "CN": "China",
-        "MI": "Global",   # MIXM = Global
-        "GL": "Global",   # GLXM = Global (legacy)
-        "EU": None,       # Europe
-        "IN": None,       # India
-        "ID": None,       # Indonesia
-        "TW": None,       # Taiwan
-        "TR": None,       # Turkey
-        "RU": None,       # Russia
-    }
+    Version suffix is the AUTHORITATIVE source when present.
+    Text-based keywords are used ONLY when no version string is found.
+    This prevents a '#Global' title hashtag from overriding a TWXM/RUXM/EUXM suffix.
+    """
+    # Search for a version string in both text and version arg
     v_match = re.search(
         r'os3\.\d+\.\d+\.\d+\.([A-Z0-9]{4,})',
         text + " " + version,
         re.IGNORECASE,
     )
+
     if v_match:
         code = v_match.group(1).upper()
+
         if code.endswith("XM") and len(code) >= 4:
             rc = code[-4:-2]
-            if rc in _SUFFIX_REGION:
-                return _SUFFIX_REGION[rc]
-        # Legacy fallbacks for non-standard suffix lengths
+            if rc in VERSION_SUFFIX_REGION:
+                # Known suffix — authoritative. Ignores any text keyword.
+                return VERSION_SUFFIX_REGION[rc]
+            # Unknown XM suffix → reject (never falls through to text).
+            return None
+
+        # Non-XM suffix: use legacy substring checks for older build numbers.
         if "EEA" in code or code[3:5] == "EU":
             return None
         if "IND" in code:
@@ -231,8 +266,19 @@ def detect_region(text: str, version: str = "") -> str | None:
             return "Global"
         if "CN" in code:
             return "China"
+        # Unrecognised non-XM suffix — fall through to text keywords.
 
-    return None  # Unknown / not one of the allowed regions
+    # No version string found: use text keywords as fallback.
+    combined = (text + " " + version).lower()
+    for kw in REJECT_REGION_KEYWORDS:
+        if kw in combined:
+            return None
+    if "global" in combined:
+        return "Global"
+    if "china" in combined or " cn " in combined or "cn rom" in combined or "cn stable" in combined:
+        return "China"
+
+    return None
 
 
 def detect_stable(text: str) -> bool:
