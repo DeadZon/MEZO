@@ -72,12 +72,12 @@ def create_debug_zip() -> Path | None:
 
             # ── output/reports/** (skip the ZIP itself and large files) ──────
             if REPORTS_DIR.is_dir():
-                for f in sorted(REPORTS_DIR.glob("*")):
+                for f in sorted(REPORTS_DIR.rglob("*")):
                     if f == zip_path:
                         continue
                     if f.is_file() and f.suffix != ".img":
                         if f.stat().st_size < 20 * 1024 * 1024:
-                            _add(zf, f, f"reports/{f.name}")
+                            _add(zf, f, f"reports/{f.relative_to(REPORTS_DIR)}")
 
             # ── Extra named report files (belt-and-suspenders) ────────────────
             for rel in [
@@ -99,6 +99,9 @@ def create_debug_zip() -> Path | None:
                 "output/reports/kaorios_toolbox_report.txt",
                 "output/reports/kaorios_framework_patch_report.txt",
                 "output/reports/kaorios_error_report.txt",
+                # JAR Mods engine reports
+                "output/reports/jar_patches/deadzone_mezo_jar_mods_report.txt",
+                "output/reports/jar_patches/deadzone_mezo_jar_mods_error.txt",
             ]:
                 p = WORK_DIR / rel
                 arcname = Path(rel).name

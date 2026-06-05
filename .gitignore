@@ -1,6 +1,15 @@
 
 **/__pycache__/
+__pycache__/
 *.pyc
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# DeadZone MEZO JAR mods — local reference artifacts (never commit)
+*.mtcr
+MyMezo.zip
+_DeadZoneRefs/
+.tmp_deadzone_refs/
+*_mtcr/
+bin/third_party/mymezo_mtcr/
