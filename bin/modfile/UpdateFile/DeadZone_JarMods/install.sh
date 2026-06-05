@@ -15,11 +15,19 @@
 #   - miui-wifi-service (MiuiWifiService country code observer)
 #
 # This is a base DeadZone feature, not style-specific.
+#
+# TEMPORARILY DISABLED — feature flag ENABLE_DEADZONE_JAR_MODS controls execution.
+# Set ENABLE_DEADZONE_JAR_MODS=true to re-enable.
 
 set -euo pipefail
 
 work_dir=$(pwd)
 source "$work_dir/functions.sh"
+
+if [ "${ENABLE_DEADZONE_JAR_MODS:-false}" != "true" ]; then
+    mods "[DeadZone_JarMods] Temporarily disabled — skipping JAR patch engine"
+    exit 0
+fi
 
 mods "DeadZone MEZO JAR Mods — running unified JAR patch engine"
 

@@ -28,3 +28,6 @@ if [ $PATCHER_EXIT -ne 0 ]; then
 fi
 
 mods "DeadZone Framework Patcher — Done"
+
+# Write active mods report for this build
+python3 "$work_dir/bin/scripts/write_active_mods_report.py" || true

@@ -1,0 +1,20 @@
+DeadZone Active Mods Report
+========================================
+Generated : 2026-06-05 18:08:33 UTC
+DZ_STYLE  : Stable
+
+Enabled (3):
+  [ON]  Signature Verification Bypass
+  [ON]  invoke-custom handling
+  [ON]  DeadZone_KaoriosToolbox
+
+Temporarily disabled (3):
+  [OFF] DeadZone_JarMods
+  [OFF] DeadZone_MEZOFramework
+  [OFF] MyMezo-derived patches
+
+Notes:
+  - DeadZone_FrameworkPatcher always runs (Signature Verification Bypass + invoke-custom).
+  - DeadZone_KaoriosToolbox always runs (base feature for both Stable and Legend).
+  - DeadZone_JarMods and DeadZone_MEZOFramework are temporarily disabled.
+    Code and checks are preserved. Set ENABLE_DEADZONE_JAR_MODS=true to re-enable.

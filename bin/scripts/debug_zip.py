@@ -84,6 +84,7 @@ def create_debug_zip() -> Path | None:
                 "output/logs/package_commands.log",
                 "output/reports/package_error_report.txt",
                 "output/reports/image_type_report.txt",
+                "output/reports/active_mods_report.txt",
                 "output/reports/framework_patcher_report.txt",
                 "output/reports/signature_verification_bypass_report.txt",
                 "output/reports/invoke_custom_report.txt",
