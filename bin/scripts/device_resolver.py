@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Device and SuperConfig resolver for MEZO ROM Builder.
 
-Searches devices/ and third_party/mezo_core/SuperConfig/ for a codename,
+Searches bin/devices/ and bin/third_party/mezo_core/SuperConfig/ for a codename,
 merges the configs, and writes output/reports/device_resolve_report.txt.
 
 Usage:
@@ -16,9 +16,9 @@ import re
 import sys
 from pathlib import Path
 
-DEVICES_MTK     = Path("devices/mtk")
-DEVICES_SD      = Path("devices/snapdragon")
-SUPER_CFG_DIR   = Path("third_party/mezo_core/SuperConfig")
+DEVICES_MTK     = Path("bin/devices/mtk")
+DEVICES_SD      = Path("bin/devices/snapdragon")
+SUPER_CFG_DIR   = Path("bin/third_party/mezo_core/SuperConfig")
 DDEVICE_DIR     = Path("bin/ddevice")
 REPORTS_DIR     = Path("output/reports")
 

@@ -68,7 +68,7 @@ elif [[ ${is_base_rom_eu} == true ]];then
         error "No super.img.* chunks found after unzip!"
         exit 1
     fi
-    python3 scripts/image_utils.py merge \
+    python3 bin/scripts/image_utils.py merge \
         --dst build/baserom/images/super.img \
         --simg2img "$(pwd)/bin/Linux/x86_64/simg2img" \
         $_super_chunks \
@@ -78,7 +78,7 @@ elif [[ ${is_base_rom_eu} == true ]];then
     unpack "[super.img] extracted."
     if [[ -f build/baserom/images/cust.img.0 ]];then
         _cust_chunks=$(ls build/baserom/images/cust.img.* 2>/dev/null | sort)
-        python3 scripts/image_utils.py merge \
+        python3 bin/scripts/image_utils.py merge \
             --dst build/baserom/images/cust.img \
             --simg2img "$(pwd)/bin/Linux/x86_64/simg2img" \
             $_cust_chunks \

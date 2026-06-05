@@ -457,6 +457,10 @@ def _create_debug_zip() -> "Path | None":
                 "output/logs/package_commands.log",
                 "output/reports/package_error_report.txt",
                 "output/reports/image_type_report.txt",
+                "output/reports/framework_patcher_report.txt",
+                "output/reports/signature_verification_bypass_report.txt",
+                "output/reports/invoke_custom_report.txt",
+                "output/reports/framework_patcher_error.txt",
                 "output/reports/final_zip_template_report.txt",
                 "output/reports/snapdragon_flash_script_report.txt",
                 "output/reports/deadzone_style_report.txt",
@@ -1918,14 +1922,14 @@ def _gen_pipeline_scan_report() -> None:
     ]
 
     files_to_scan = [
-        ("build.sh",                              WORK_DIR / "build.sh"),
-        ("packROM.sh",                            WORK_DIR / "packROM.sh"),
-        ("scripts/package_rom.py",                WORK_DIR / "scripts" / "package_rom.py"),
-        ("scripts/pixeldrain_upload.py",          WORK_DIR / "scripts" / "pixeldrain_upload.py"),
-        ("scripts/tg_watch.py",                   WORK_DIR / "scripts" / "tg_watch.py"),
-        ("scripts/telegram.py",                   WORK_DIR / "scripts" / "telegram.py"),
-        (".github/workflows/mezo_mtk.yml",        WORK_DIR / ".github" / "workflows" / "mezo_mtk.yml"),
-        (".github/workflows/mezo_snapdragon.yml", WORK_DIR / ".github" / "workflows" / "mezo_snapdragon.yml"),
+        ("build.sh",                                  WORK_DIR / "build.sh"),
+        ("packROM.sh",                                WORK_DIR / "packROM.sh"),
+        ("bin/scripts/package_rom.py",                WORK_DIR / "bin" / "scripts" / "package_rom.py"),
+        ("bin/scripts/pixeldrain_upload.py",          WORK_DIR / "bin" / "scripts" / "pixeldrain_upload.py"),
+        ("bin/scripts/tg_watch.py",                   WORK_DIR / "bin" / "scripts" / "tg_watch.py"),
+        ("bin/scripts/telegram.py",                   WORK_DIR / "bin" / "scripts" / "telegram.py"),
+        (".github/workflows/mezo_mtk.yml",            WORK_DIR / ".github" / "workflows" / "mezo_mtk.yml"),
+        (".github/workflows/mezo_snapdragon.yml",     WORK_DIR / ".github" / "workflows" / "mezo_snapdragon.yml"),
     ]
 
     _MARKER_RE = re.compile(

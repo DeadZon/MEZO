@@ -91,7 +91,7 @@ jobs:
       # ── Telegram: build started ───────────────────────────────────────────
       - name: Telegram - Started
         if: ${{ inputs.notify_telegram }}
-        run: sudo -E python3 scripts/telegram.py start snapdragon
+        run: sudo -E python3 bin/scripts/telegram.py start snapdragon
 
       # ── Build ROM (with live log watcher) ─────────────────────────────────
       - name: Build ROM
@@ -105,7 +105,7 @@ jobs:
 
           if [ "${{ inputs.notify_telegram }}" = "true" ]; then
             rm -f /tmp/tg_watch_stop
-            sudo -E python3 scripts/tg_watch.py "$LOG" unpack &
+            sudo -E python3 bin/scripts/tg_watch.py "$LOG" unpack &
             TG_PID=$!
           fi
 
@@ -124,8 +124,8 @@ jobs:
       - name: Telegram - Build Done
         if: ${{ inputs.notify_telegram && success() }}
         run: |
-          sudo -E python3 scripts/telegram.py update unpack OK
-          sudo -E python3 scripts/telegram.py update mods OK
+          sudo -E python3 bin/scripts/telegram.py update unpack OK
+          sudo -E python3 bin/scripts/telegram.py update mods OK
 
       # ── Pack ROM (with live log watcher) ──────────────────────────────────
       - name: Pack ROM
@@ -139,7 +139,7 @@ jobs:
 
           if [ "${{ inputs.notify_telegram }}" = "true" ]; then
             rm -f /tmp/tg_watch_stop
-            sudo -E python3 scripts/tg_watch.py "$LOG" rebuild &
+            sudo -E python3 bin/scripts/tg_watch.py "$LOG" rebuild &
             TG_PID=$!
           fi
 
@@ -158,9 +158,9 @@ jobs:
       - name: Telegram - Pack Done
         if: ${{ inputs.notify_telegram && success() }}
         run: |
-          sudo -E python3 scripts/telegram.py update rebuild OK
-          sudo -E python3 scripts/telegram.py update super OK
-          sudo -E python3 scripts/telegram.py update vbmeta OK
+          sudo -E python3 bin/scripts/telegram.py update rebuild OK
+          sudo -E python3 bin/scripts/telegram.py update super OK
+          sudo -E python3 bin/scripts/telegram.py update vbmeta OK
 
       # ── Package final ROM ZIP (DeadZone template) ────────────────────────
       - name: Package ROM ZIP
@@ -172,11 +172,11 @@ jobs:
 
           if [ "${{ inputs.notify_telegram }}" = "true" ]; then
             rm -f /tmp/tg_watch_stop
-            sudo -E python3 scripts/tg_watch.py "$LOG" zip &
+            sudo -E python3 bin/scripts/tg_watch.py "$LOG" zip &
             TG_PID=$!
           fi
 
-          sudo -E python3 scripts/package_rom.py 2>&1 | tee "$LOG"
+          sudo -E python3 bin/scripts/package_rom.py 2>&1 | tee "$LOG"
           STEP_EXIT=${PIPESTATUS[0]}
 
           if [ "${{ inputs.notify_telegram }}" = "true" ]; then
@@ -191,12 +191,12 @@ jobs:
 
       - name: Telegram - Package Done
         if: ${{ inputs.notify_telegram && success() }}
-        run: sudo -E python3 scripts/telegram.py update zip OK
+        run: sudo -E python3 bin/scripts/telegram.py update zip OK
 
       # ── PixelDrain upload (primary upload path) ───────────────────────────
       - name: Telegram - Upload Starting
         if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
-        run: sudo -E python3 scripts/telegram.py update upload_pixeldrain RUN
+        run: sudo -E python3 bin/scripts/telegram.py update upload_pixeldrain RUN
 
       - name: PixelDrain Upload
         id: pixeldrain_upload
@@ -208,11 +208,11 @@ jobs:
             exit 1
           fi
           echo "[PIXELDRAIN] Uploading: $ZIP_PATH"
-          sudo -E python3 scripts/pixeldrain_upload.py "$ZIP_PATH"
+          sudo -E python3 bin/scripts/pixeldrain_upload.py "$ZIP_PATH"
 
       - name: Telegram - Upload Done
         if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
-        run: sudo -E python3 scripts/telegram.py update upload_pixeldrain OK
+        run: sudo -E python3 bin/scripts/telegram.py update upload_pixeldrain OK
 
       # ── Final Telegram status ──────────────────────────────────────────────
       - name: Telegram - Success
@@ -232,7 +232,7 @@ jobs:
             ZIP_SIZE=$(python3 -c "import os; print(f'{os.path.getsize(\"$ZIP_PATH\")/1024/1024:.1f}')" 2>/dev/null || echo "0")
           fi
 
-          sudo -E python3 scripts/telegram.py finish OK \
+          sudo -E python3 bin/scripts/telegram.py finish OK \
             --url "$PIXELDRAIN_URL" \
             --zip "${ZIP_NAME:-}" \
             --size "${ZIP_SIZE:-0}"
@@ -242,7 +242,7 @@ jobs:
         if: failure()
         run: |
           mkdir -p output/reports output/logs
-          sudo -E python3 scripts/debug_zip.py || true
+          sudo -E python3 bin/scripts/debug_zip.py || true
 
       - name: Telegram - Failed
         if: ${{ inputs.notify_telegram && failure() }}
@@ -271,7 +271,7 @@ jobs:
             DEBUG_ZIP_NAME="build_failure_debug.zip (artifact: deadzone-failure-debug)"
           fi
 
-          sudo -E python3 scripts/telegram.py finish FAIL \
+          sudo -E python3 bin/scripts/telegram.py finish FAIL \
             ${FAILED_STAGE:+--failed-stage "$FAILED_STAGE"} \
             ${ERROR_TEXT:+--error "$ERROR_TEXT"} \
             ${DEBUG_ZIP_NAME:+--debug-zip "$DEBUG_ZIP_NAME"}

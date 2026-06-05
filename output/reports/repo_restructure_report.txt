@@ -1,0 +1,173 @@
+DeadZone MEZO Repository Restructure Report
+============================================================
+Generated: 2026-06-05
+Commit message: Reorganize project folders under bin
+
+============================================================
+MOVED FOLDERS
+============================================================
+
+  OLD PATH                   NEW PATH
+  -------------------------  -------------------------
+  devices/                   bin/devices/
+  scripts/                   bin/scripts/
+  tests/                     bin/checks/
+  third_party/               bin/third_party/
+
+Root folders devices/, scripts/, tests/, third_party/ have been
+removed from the repository root. The root now contains only:
+  .github/, bin/, build.sh, packROM.sh, functions.sh,
+  setup.sh, uploadROM.sh, pytest.ini, .gitignore, LICENSE, etc.
+
+============================================================
+RENAMED FILES (tests/ -> bin/checks/ with check_ prefix)
+============================================================
+
+  OLD NAME                                NEW NAME
+  ------------------------------------    ------------------------------------
+  tests/test_soc_template_packaging.py   bin/checks/check_soc_template_packaging.py
+  tests/test_framework_patcher.py        bin/checks/check_framework_patcher.py
+
+No files named test_* remain in the repository.
+
+============================================================
+FILES WITH PATH REFERENCES UPDATED
+============================================================
+
+1. build.sh
+   - scripts/image_utils.py merge -> bin/scripts/image_utils.py merge
+   - (2 occurrences updated)
+
+2. bin/scripts/device_resolver.py  (was scripts/device_resolver.py)
+   - DEVICES_MTK = Path("devices/mtk") -> Path("bin/devices/mtk")
+   - DEVICES_SD  = Path("devices/snapdragon") -> Path("bin/devices/snapdragon")
+   - SUPER_CFG_DIR = Path("third_party/...") -> Path("bin/third_party/...")
+
+3. bin/scripts/package_rom.py  (was scripts/package_rom.py)
+   - _gen_pipeline_scan_report() files_to_scan paths updated:
+     scripts/package_rom.py -> bin/scripts/package_rom.py
+     scripts/pixeldrain_upload.py -> bin/scripts/pixeldrain_upload.py
+     scripts/tg_watch.py -> bin/scripts/tg_watch.py
+     scripts/telegram.py -> bin/scripts/telegram.py
+
+4. bin/modfile/UpdateFile/DeadZone_FrameworkPatcher/install.sh
+   - python3 "$work_dir/scripts/deadzone_framework_patcher.py"
+     -> python3 "$work_dir/bin/scripts/deadzone_framework_patcher.py"
+
+5. bin/checks/check_framework_patcher.py  (was tests/test_framework_patcher.py)
+   - Path references using parent.parent = bin/:
+     / "bin/modfile/..." -> / "modfile/..." (2 occurrences)
+   - sys.path: parent.parent / "scripts" = bin/scripts/ (correct, no change needed)
+
+============================================================
+WORKFLOW PATH UPDATES
+============================================================
+
+Both workflows updated: all python3 scripts/X.py -> python3 bin/scripts/X.py
+
+.github/workflows/mezo_mtk.yml:
+  sudo -E python3 scripts/telegram.py       -> bin/scripts/telegram.py
+  sudo -E python3 scripts/tg_watch.py       -> bin/scripts/tg_watch.py
+  sudo -E python3 scripts/package_rom.py    -> bin/scripts/package_rom.py
+  sudo -E python3 scripts/pixeldrain_upload.py -> bin/scripts/pixeldrain_upload.py
+  sudo -E python3 scripts/debug_zip.py      -> bin/scripts/debug_zip.py
+
+.github/workflows/mezo_snapdragon.yml:
+  (same replacements as mezo_mtk.yml)
+
+.github/workflows/build.yml (legacy/disabled):
+  (same replacements applied for consistency)
+
+============================================================
+IMPORTS AND SYS.PATH UPDATES
+============================================================
+
+bin/scripts/package_rom.py:
+  - Imports device_resolver via Path(__file__).parent/device_resolver.py
+  - Both files now in bin/scripts/ - works correctly, no change needed
+
+bin/checks/check_soc_template_packaging.py:
+  - REPO_ROOT = Path(__file__).parent.parent (= bin/ after move)
+  - REPO_ROOT / "scripts" = bin/scripts/ - correct path, no change needed
+  - importlib.util.spec_from_file_location("package_rom", REPO_ROOT/"scripts"/...)
+    = bin/scripts/package_rom.py - correct, no change needed
+
+bin/checks/check_framework_patcher.py:
+  - sys.path parent.parent / "scripts" = bin/scripts/ - correct, no change needed
+  - Fixed "bin/modfile/..." string literals that would produce bin/bin/... paths
+
+============================================================
+PYCACHE CLEANUP
+============================================================
+
+Untracked from git and deleted from filesystem:
+  bin/imgextractor/__pycache__/ext4.cpython-310.pyc
+  bin/package/DISABLE_AVB/.../generate_gki_certificate.cpython-311.pyc
+  bin/package/DISABLE_AVB/.../generate_gki_certificate.cpython-313.pyc
+  bin/scripts/__pycache__/ (all contents)
+  tests/__pycache__/ (all contents)
+
+.gitignore updated:
+  __pycache__/ -> **/__pycache__/
+  Added: .pytest_cache/, .mypy_cache/, .ruff_cache/
+
+============================================================
+PYTEST CONFIGURATION
+============================================================
+
+Created pytest.ini:
+  [pytest]
+  python_files = check_*.py
+  testpaths = bin/checks
+
+Pytest now discovers check_*.py files in bin/checks/
+Run with: python -m pytest bin/checks
+
+============================================================
+VALIDATION RESULTS
+============================================================
+
+Syntax checks (all PASS):
+  python3 -m py_compile bin/scripts/package_rom.py         OK
+  python3 -m py_compile bin/scripts/image_utils.py         OK
+  python3 -m py_compile bin/scripts/debug_zip.py           OK
+  python3 -m py_compile bin/scripts/telegram.py            OK
+  python3 -m py_compile bin/scripts/deadzone_framework_patcher.py  OK
+  python3 -m py_compile bin/scripts/device_resolver.py     OK
+  python3 -m py_compile bin/checks/check_framework_patcher.py      OK
+  python3 -m py_compile bin/checks/check_soc_template_packaging.py OK
+
+git ls-files root checks:
+  git ls-files | grep "^scripts/"      -> 0 results (PASS)
+  git ls-files | grep "^devices/"      -> 0 results (PASS)
+  git ls-files | grep "^tests/"        -> 0 results (PASS)
+  git ls-files | grep "^third_party/"  -> 0 results (PASS)
+  git ls-files | grep "test_"          -> 0 results (PASS)
+  git ls-files | grep "pycache|.pyc"   -> 0 results (PASS)
+
+Runtime checks:
+  bin/checks/check_framework_patcher.py   22/22 PASS
+  bin/checks/check_soc_template_packaging.py
+    95/108 passed
+    13 FAIL - all Snapdragon dual-slot tests (pre-existing failures,
+    not caused by restructuring; SD flash style was changed to garnet
+    reference _ab in a prior task, these tests test old _a/_b behavior)
+
+============================================================
+NO FUNCTIONAL CHANGES
+============================================================
+
+The following were NOT changed by this restructuring:
+  - MTK flash map and flash commands
+  - Snapdragon _ab garnet reference style
+  - PixelDrain upload logic
+  - Telegram notification behavior
+  - ROM patch logic (OS1/OS2/OS3, Universal, UpdateFile mods)
+  - Build pipeline steps (build.sh, packROM.sh)
+  - Final ZIP packaging
+  - Framework patcher patch logic
+  - ROMInformation/About phone branding
+
+============================================================
+END OF REPORT
+============================================================

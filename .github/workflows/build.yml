@@ -69,7 +69,7 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py start
+          sudo -E python3 bin/scripts/telegram.py start
 
       - name: Build ROM...
         env:
@@ -88,8 +88,8 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py update build_rom OK
-          sudo -E python3 scripts/telegram.py update pack_rom RUN
+          sudo -E python3 bin/scripts/telegram.py update build_rom OK
+          sudo -E python3 bin/scripts/telegram.py update pack_rom RUN
 
       - name: Pack ROM...
         run: |
@@ -106,7 +106,7 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py update pack_rom OK
+          sudo -E python3 bin/scripts/telegram.py update pack_rom OK
 
       - name: Setup Rclone...
         run: |
@@ -123,7 +123,7 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py update upload_onedrive RUN
+          sudo -E python3 bin/scripts/telegram.py update upload_onedrive RUN
 
       - name: Upload ROM...
         run: |
@@ -140,7 +140,7 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py update upload_pixeldrain RUN
+          sudo -E python3 bin/scripts/telegram.py update upload_pixeldrain RUN
 
       - name: PixelDrain Upload
         if: ${{ inputs.upload_pixeldrain && success() }}
@@ -153,7 +153,7 @@ jobs:
             exit 1
           fi
           echo "[PIXELDRAIN] ZIP path: $ZIP_PATH"
-          sudo -E python3 scripts/pixeldrain_upload.py "$ZIP_PATH"
+          sudo -E python3 bin/scripts/pixeldrain_upload.py "$ZIP_PATH"
 
       - name: Telegram - PixelDrain Upload Done
         if: ${{ inputs.notify_telegram && inputs.upload_pixeldrain && success() }}
@@ -165,7 +165,7 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py update upload_pixeldrain OK
+          sudo -E python3 bin/scripts/telegram.py update upload_pixeldrain OK
 
       # ── Telegram: final status ─────────────────────────────────────────────
       - name: Telegram - Success
@@ -183,7 +183,7 @@ jobs:
           if [ -f "$REPORT" ]; then
             PIXELDRAIN_URL=$(python3 -c "import json; d=json.load(open('$REPORT')); print(d.get('url',''))" 2>/dev/null || echo "")
           fi
-          sudo -E python3 scripts/telegram.py finish OK "$PIXELDRAIN_URL"
+          sudo -E python3 bin/scripts/telegram.py finish OK "$PIXELDRAIN_URL"
 
       - name: Telegram - Failed
         if: ${{ inputs.notify_telegram && failure() }}
@@ -195,7 +195,7 @@ jobs:
           TELEGRAM_SNAPDRAGON_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
           TELEGRAM_SNAPDRAGON_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
         run: |
-          sudo -E python3 scripts/telegram.py finish FAIL
+          sudo -E python3 bin/scripts/telegram.py finish FAIL
 
       # ── Workspace cleanup ─────────────────────────────────────────────────
       - name: Cleanup Workspace
