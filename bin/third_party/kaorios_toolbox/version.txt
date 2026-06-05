@@ -1,0 +1,8 @@
+version=2.0.4.0
+tag=V2.0.4
+build_date=23-05-2026
+source_repo=https://github.com/Wuang26/Kaorios-Toolbox
+guide=Toolbox-docs/V2.0.3+
+apk_release_name=KaoriosPatcher-V2.0.4.0.apk
+xml_release_name=com.kousei.kaorios.xml
+dex_release_name=classes_V2.0.4.0.dex

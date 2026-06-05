@@ -94,6 +94,11 @@ def create_debug_zip() -> Path | None:
                 "output/reports/device_resolve_report.txt",
                 "output/reports/final_zip_manifest.txt",
                 "output/reports/final_zip_summary.json",
+                # Kaorios Toolbox reports
+                "output/reports/kaorios_assets_report.txt",
+                "output/reports/kaorios_toolbox_report.txt",
+                "output/reports/kaorios_framework_patch_report.txt",
+                "output/reports/kaorios_error_report.txt",
             ]:
                 p = WORK_DIR / rel
                 arcname = Path(rel).name

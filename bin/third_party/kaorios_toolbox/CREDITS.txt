@@ -1,0 +1,25 @@
+Kaorios Toolbox
+===============
+Author:       Wuang26
+Repository:   https://github.com/Wuang26/Kaorios-Toolbox
+Release used: KaoriosToolbox - V2.0.4  (tag V2.0.4, published 2026-05-22)
+Build date:   23-05-2026
+
+Assets used:
+  APK:         KaoriosPatcher-V2.0.4.0.apk  (stored as KaoriosToolbox.apk)
+  XML:         com.kousei.kaorios.xml  (stored as privapp_whitelist_com.kousei.kaorios.xml)
+  classes.dex: classes_V2.0.4.0.dex  (stored as classes.dex)
+
+License:
+  Kaorios Toolbox is the intellectual property of Wuang26.
+  Integrated into DeadZone ROM with attribution.
+  No modifications were made to the binary assets.
+
+Integration guide:
+  Toolbox-docs/V2.0.3+/Guide_2.0.3+.md
+  Used for framework hook logic and smali patching reference.
+
+DeadZone Integration:
+  Prepared by Mohammed-MEZO (hypermezo4@gmail.com)
+  Part of the DeadZone ROM build pipeline.
+  https://github.com/Mohammed-MEZO/DeadZone_MEZO
