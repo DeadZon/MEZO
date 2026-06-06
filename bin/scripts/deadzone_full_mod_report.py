@@ -48,24 +48,74 @@ def _collect_mod_reports(reports_dir: Path) -> list[dict[str, Any]]:
     return collected
 
 
+_CHANGED_STATUSES  = frozenset({"changed", "applied", "success"})
+_SKIPPED_STATUSES  = frozenset({"skipped", "skipped_not_found", "skipped_not_target_rom"})
+_FAILED_STATUSES   = frozenset({"failed", "failed_optional", "failed_fatal"})
+
+
+def _classify_status(status: str, detail: str = "") -> str:
+    """Map any status string to a canonical category."""
+    s = status.lower()
+    if "applied via group" in detail.lower():
+        return "applied_via_group"
+    if s in _CHANGED_STATUSES:
+        return "changed"
+    if s in _FAILED_STATUSES:
+        return "failed"
+    return "skipped"
+
+
+def _iter_all_results(mod_report: dict) -> list[dict]:
+    """Yield all result entries from a mod report (handles flat and nested formats)."""
+    # Flat: report has top-level "results" list
+    if "results" in mod_report:
+        return list(mod_report["results"])
+    # Nested: lite_apk_patches_report has "patches" → {patch_name: {results: [...]}}
+    if "patches" in mod_report:
+        all_r: list[dict] = []
+        for patch_data in mod_report["patches"].values():
+            all_r.extend(patch_data.get("results", []))
+        return all_r
+    return []
+
+
 def _summarize_results(mod_reports: list[dict]) -> dict[str, Any]:
     """Count across all mod result entries."""
-    totals = {"changed": 0, "skipped": 0, "failed": 0, "applied_via_group": 0, "total": 0}
+    totals = {
+        "changed": 0,
+        "skipped": 0,
+        "skipped_not_found": 0,
+        "failed": 0,
+        "failed_optional": 0,
+        "applied_via_group": 0,
+        "total": 0,
+    }
     for report in mod_reports:
-        results = report.get("results", [])
-        for r in results:
+        for r in _iter_all_results(report):
             status = r.get("status", "")
             detail = r.get("detail", "")
             totals["total"] += 1
-            if "applied via group" in detail.lower():
-                totals["applied_via_group"] += 1
-            elif status == "changed":
-                totals["changed"] += 1
-            elif status == "failed":
-                totals["failed"] += 1
-            else:
-                totals["skipped"] += 1
+            cat = _classify_status(status, detail)
+            totals[cat] += 1
+            if status == "skipped_not_found":
+                totals["skipped_not_found"] += 1
+            if status == "failed_optional":
+                totals["failed_optional"] += 1
     return totals
+
+
+_STATUS_MARKS: dict[str, str] = {
+    "changed":                "[OK]      ",
+    "applied":                "[OK]      ",
+    "success":                "[OK]      ",
+    "applied_via_group":      "[GROUP]   ",
+    "skipped":                "[SKIP]    ",
+    "skipped_not_found":      "[SKIP_NF] ",
+    "skipped_not_target_rom": "[SKIP_ROM]",
+    "failed":                 "[FAIL]    ",
+    "failed_optional":        "[FAIL_OPT]",
+    "failed_fatal":           "[FAIL_FAT]",
+}
 
 
 def _format_txt(
@@ -77,12 +127,14 @@ def _format_txt(
     lines = [
         "DeadZone Full Mod Report",
         "=" * 50,
-        f"Generated : {_ts()}",
-        f"DZ_STYLE  : {dz_style}",
-        f"Final ZIP : {final_zip or '(not built yet)'}",
+        f"Generated     : {_ts()}",
+        f"DZ_STYLE      : {dz_style}",
+        f"Final ZIP     : {final_zip or '(not built yet)'}",
         "",
-        f"Totals — changed: {totals['changed']}  skipped: {totals['skipped']}  "
-        f"failed: {totals['failed']}  via-group: {totals['applied_via_group']}  "
+        f"Totals — changed: {totals['changed']}  "
+        f"skipped: {totals['skipped']} (not_found: {totals.get('skipped_not_found', 0)})  "
+        f"failed: {totals['failed']} (opt: {totals.get('failed_optional', 0)})  "
+        f"via-group: {totals['applied_via_group']}  "
         f"total: {totals['total']}",
         "",
     ]
@@ -96,33 +148,33 @@ def _format_txt(
 
         style = report.get("style", "?")
         ts = report.get("generated", "?")
-        results = report.get("results", [])
 
-        lines += [
-            f"── {source} (style={style}, {ts}) ──",
-        ]
+        lines.append(f"── {source} (style={style}, {ts}) ──")
 
-        for r in results:
+        for r in _iter_all_results(report):
             status   = r.get("status", "?")
             detail   = r.get("detail", "")
             target   = r.get("target_file", r.get("patch", "?"))
-            mod_id   = r.get("mod", r.get("id", ""))
+            mod_id   = r.get("mod", r.get("id", r.get("patch_name", "")))
             err      = r.get("error", "")
+            searched = r.get("searched_paths", [])
 
-            if "applied via group" in detail.lower():
-                mark = "  [GROUP]"
-            elif status == "changed":
-                mark = "  [OK]   "
-            elif status == "failed":
-                mark = "  [FAIL] "
-            else:
-                mark = "  [SKIP] "
+            cat = _classify_status(status, detail)
+            mark = _STATUS_MARKS.get(status.lower(), _STATUS_MARKS.get(cat, "  [???]    "))
 
             summary = detail or err or target
             if len(summary) > 120:
                 summary = summary[:117] + "..."
 
-            lines.append(f"{mark} {mod_id or target} — {summary}")
+            lines.append(f"  {mark} {mod_id or target} — {summary}")
+
+            # Show searched paths for missing/not-found entries
+            if searched and status in ("skipped_not_found", "failed_optional", "failed"):
+                lines.append(f"    Searched paths ({len(searched)}):")
+                for sp in searched[:8]:
+                    lines.append(f"      - {sp}")
+                if len(searched) > 8:
+                    lines.append(f"      ... ({len(searched) - 8} more)")
 
         lines.append("")
 
@@ -170,8 +222,11 @@ def write_full_report(
 
     print(f"[FULL_REPORT] TXT  → {txt_path}")
     print(f"[FULL_REPORT] JSON → {json_path}")
-    print(f"[FULL_REPORT] Totals: changed={full['totals']['changed']}  "
-          f"skipped={full['totals']['skipped']}  failed={full['totals']['failed']}")
+    t = full["totals"]
+    print(f"[FULL_REPORT] Totals: changed={t['changed']}  "
+          f"skipped={t['skipped']} (nf={t.get('skipped_not_found', 0)})  "
+          f"failed={t['failed']} (opt={t.get('failed_optional', 0)})  "
+          f"total={t['total']}")
 
 
 if __name__ == "__main__":

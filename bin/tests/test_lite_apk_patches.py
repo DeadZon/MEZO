@@ -107,11 +107,12 @@ class TestProvisionStrings:
         assert any(e["status"] == "changed" for e in report)
 
     def test_missing_apk_returns_skipped(self, tmp_path):
-        """Test 2: Missing Provision.apk returns SKIPPED (no provision_unpacked dir, no APK)."""
+        """Test 2: Missing Provision.apk returns skipped/skipped_not_found (no APK, no unpacked dir)."""
         report = []
         _apk.apply_provision_strings(tmp_path, report)
         assert len(report) >= 1
-        assert all(e["status"] == "skipped" for e in report)
+        _skipped_variants = {"skipped", "skipped_not_found"}
+        assert all(e["status"] in _skipped_variants for e in report)
 
     def test_missing_string_names_added_to_values_strings_xml(self, tmp_path):
         """Test 3: String names missing everywhere are added to res/values/strings.xml."""
@@ -712,10 +713,11 @@ class TestPowerKeeperPatches:
         assert gms_entry.get("methods_patched", 0) == 0
 
     def test_missing_powerkeeper_apk_skipped(self, tmp_path):
-        """Test 24c: No APK and no unpacked dir → SKIPPED at top level."""
+        """Test 24c: No APK and no unpacked dir → SKIPPED/SKIPPED_NOT_FOUND at top level."""
         report = []
         _apk.apply_powerkeeper_cn_global_patches(tmp_path, report)
-        assert any(e["status"] == "skipped" for e in report)
+        _skipped = {"skipped", "skipped_not_found"}
+        assert any(e["status"] in _skipped for e in report)
 
     def test_powerkeeper_patches_idempotent(self, tmp_path):
         """Test 25: Running PowerKeeper patches twice produces identical results."""

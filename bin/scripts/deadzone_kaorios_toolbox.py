@@ -75,8 +75,14 @@ ASSET_PATHS = {
 BACKUP_SUFFIX = ".bak_deadzone_kaorios"
 
 # ── JAR candidates ─────────────────────────────────────────────────────────────
-FRAMEWORK_JAR_CANDIDATES = ["system/framework/framework.jar"]
-SERVICES_JAR_CANDIDATES  = ["system/framework/services.jar"]
+FRAMEWORK_JAR_CANDIDATES = [
+    "system/framework/framework.jar",
+    "system/system/framework/framework.jar",
+]
+SERVICES_JAR_CANDIDATES  = [
+    "system/framework/services.jar",
+    "system/system/framework/services.jar",
+]
 
 # ── build.prop properties ──────────────────────────────────────────────────────
 BUILDPROP_HEADER = "# Kaorios Toolbox"
@@ -86,8 +92,13 @@ BUILDPROP_PROPS  = [
 ]
 BUILDPROP_CANDIDATES = [
     "system/build.prop",
+    "system/system/build.prop",
     "product/build.prop",
+    "product/product/build.prop",
     "system_ext/build.prop",
+    "system_ext/system_ext/build.prop",
+    "vendor/build.prop",
+    "vendor/vendor/build.prop",
 ]
 
 # ── Smali class paths ──────────────────────────────────────────────────────────
@@ -454,19 +465,28 @@ def validate_install(run: KaoriosRun) -> bool:
 
 # ── build.prop patching ────────────────────────────────────────────────────────
 
-def _find_buildprop(images: Path) -> Optional[Path]:
-    for rel in BUILDPROP_CANDIDATES:
-        p = images / rel
-        if p.is_file():
-            return p
-    return None
+def _find_buildprop(images: Path) -> tuple[Optional[Path], list[str]]:
+    """Return (path, searched_paths). Checks under images and WORK_DIR."""
+    searched: list[str] = []
+    bases = [images]
+    if images != WORK_DIR:
+        bases.append(WORK_DIR)
+    for base in bases:
+        for rel in BUILDPROP_CANDIDATES:
+            p = base / rel
+            searched.append(str(p))
+            if p.is_file():
+                return p, searched
+    return None, searched
 
 
 def patch_buildprop(run: KaoriosRun) -> bool:
-    bp = _find_buildprop(BUILD_IMAGES)
+    bp, searched = _find_buildprop(BUILD_IMAGES)
     if bp is None:
-        _err("build.prop not found in ROM tree (checked system, product, system_ext)")
-        run.error = "build.prop not found"
+        _err(f"build.prop not found in ROM tree (searched {len(searched)} paths)")
+        for sp in searched:
+            _log(f"  searched: {sp}")
+        run.error = f"build.prop not found; searched: {searched}"
         return False
 
     run.buildprop_path = str(bp)
@@ -503,12 +523,19 @@ def patch_buildprop(run: KaoriosRun) -> bool:
 
 # ── Framework.jar DEX injection ────────────────────────────────────────────────
 
-def _find_jar(candidates: list[str]) -> Optional[Path]:
-    for rel in candidates:
-        p = BUILD_IMAGES / rel
-        if p.is_file():
-            return p
-    return None
+def _find_jar(candidates: list[str]) -> tuple[Optional[Path], list[str]]:
+    """Return (jar_path, searched_paths). Checks under BUILD_IMAGES and WORK_DIR."""
+    searched: list[str] = []
+    bases = [BUILD_IMAGES]
+    if BUILD_IMAGES != WORK_DIR:
+        bases.append(WORK_DIR)
+    for base in bases:
+        for rel in candidates:
+            p = base / rel
+            searched.append(str(p))
+            if p.is_file():
+                return p, searched
+    return None, searched
 
 
 def _next_dex_slot(jar_path: Path) -> str:
@@ -977,10 +1004,13 @@ def patch_system_server(decompile_dir: Path) -> HookResult:
 # ── Full JAR pipeline ──────────────────────────────────────────────────────────
 
 def process_framework_jar(run: KaoriosRun, apktool: Path, java: str) -> bool:
-    jar_path = _find_jar(FRAMEWORK_JAR_CANDIDATES)
+    jar_path, jar_searched = _find_jar(FRAMEWORK_JAR_CANDIDATES)
     if jar_path is None:
-        _log("framework.jar not found — skipping framework hooks")
+        _log(f"framework.jar not found (searched {len(jar_searched)} paths) — skipping framework hooks")
+        for sp in jar_searched:
+            _log(f"  searched: {sp}")
         run.hooks_skipped += 4
+        run.framework_jar = f"(not found; searched: {jar_searched})"
         return True  # Not a fatal error; ROM might not be extracted yet
 
     run.framework_jar = str(jar_path)
@@ -1051,10 +1081,13 @@ def process_framework_jar(run: KaoriosRun, apktool: Path, java: str) -> bool:
 
 
 def process_services_jar(run: KaoriosRun, apktool: Path, java: str) -> bool:
-    jar_path = _find_jar(SERVICES_JAR_CANDIDATES)
+    jar_path, jar_searched = _find_jar(SERVICES_JAR_CANDIDATES)
     if jar_path is None:
-        _log("services.jar not found — skipping SystemServer hook")
-        run.services_hook_note = "services.jar not found"
+        _log(f"services.jar not found (searched {len(jar_searched)} paths) — skipping SystemServer hook")
+        for sp in jar_searched:
+            _log(f"  searched: {sp}")
+        run.services_hook_note = f"services.jar not found; searched: {jar_searched}"
+        run.services_jar = f"(not found; searched: {jar_searched})"
         return True
 
     run.services_jar = str(jar_path)
@@ -1228,9 +1261,9 @@ def write_framework_patch_report(run: KaoriosRun) -> None:
         _sep(),
         f"Generated:          {_ts()}",
         "",
-        f"framework.jar:      {run.framework_jar or '(not found)'}",
+        f"framework.jar:      {run.framework_jar or '(not found — check searched paths in stdout)'}",
         f"framework backup:   {run.framework_backup or '(none)'}",
-        f"services.jar:       {run.services_jar or '(not found)'}",
+        f"services.jar:       {run.services_jar or '(not found — check searched paths in stdout)'}",
         f"services backup:    {run.services_backup or '(none)'}",
         "",
         f"classes.dex injected as: {run.dex_injected_name or '(not injected)'}",
@@ -1297,9 +1330,21 @@ def main() -> None:
                     help="Project root (work directory). Defaults to repo root.")
     args = ap.parse_args()
 
+    # Apply --work-dir override before anything uses global paths
+    if args.work_dir:
+        global WORK_DIR, BUILD_IMAGES, REPORTS_DIR, DDEVICE_DIR, ASSET_DIR, APKTOOL_DIR, TOOLS_DIR
+        WORK_DIR     = Path(args.work_dir).resolve()
+        BUILD_IMAGES = WORK_DIR / "build" / "baserom" / "images"
+        REPORTS_DIR  = WORK_DIR / "bin" / "output" / "reports"
+        DDEVICE_DIR  = WORK_DIR / "bin" / "ddevice"
+        ASSET_DIR    = WORK_DIR / "bin" / "third_party" / "kaorios_toolbox"
+        APKTOOL_DIR  = WORK_DIR / "bin" / "apktool"
+        TOOLS_DIR    = WORK_DIR / "bin" / "tools"
+
     _log("===== DeadZone Kaorios Toolbox Integration =====")
     _log(f"Time:    {_ts()}")
     _log(f"Version: {KAORIOS_VERSION}  (tag {KAORIOS_TAG})")
+    _log(f"Work dir: {WORK_DIR}")
 
     run = KaoriosRun(
         style      = args.style,

@@ -93,17 +93,31 @@ def _replace_brand_in_file(prop_path: Path) -> dict:
 # ── main spoof logic ───────────────────────────────────────────────────────────
 
 def _candidate_partition_dirs(work_dir: Path) -> list[tuple[str, Path]]:
-    """Return (partition_name, path) pairs covering direct and extra-base locations."""
+    """Return (partition_name, path) pairs covering direct, nested, and extra-base locations.
+
+    For each base (work_dir, work_dir/build/baserom/images) and each partition
+    (vendor, odm) yields:
+      base/partition          — direct
+      base/partition/partition — nested (HyperURBuild pattern)
+    Plus odm/etc as a supplemental prop location.
+    """
     seen: set[Path] = set()
     candidates: list[tuple[str, Path]] = []
+
+    def _add(label: str, path: Path) -> None:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            candidates.append((label, path))
+
     for base_rel in ("",) + _EXTRA_BASES:
         base = work_dir / base_rel if base_rel else work_dir
         for part in _SCAN_DIRS:
-            p = base / part
-            resolved = p.resolve()
-            if resolved not in seen:
-                seen.add(resolved)
-                candidates.append((part, p))
+            _add(part,                   base / part)            # direct
+            _add(f"{part}/{part}",       base / part / part)     # nested
+        # odm/etc — additional prop location inside odm
+        _add("odm/etc", base / "odm" / "etc")
+
     return candidates
 
 

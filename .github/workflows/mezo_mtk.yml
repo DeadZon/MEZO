@@ -288,6 +288,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # ── Upload build reports artifact ────────────────────────────────────
+      - name: Upload DeadZone build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deadzone-build-reports-${{ github.run_id }}
+          path: |
+            bin/output/reports/**
+            /tmp/mezo_build.log
+            /tmp/mezo_pack.log
+            /tmp/mezo_package.log
+          if-no-files-found: warn
+          retention-days: 14
+
       # ── Cleanup ───────────────────────────────────────────────────────────
       - name: Cleanup workspace
         if: always()

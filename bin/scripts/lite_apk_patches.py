@@ -30,6 +30,13 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent                  # project root
 APKTOOL_JAR  = SCRIPT_DIR.parent / "apktool" / "apktool.jar"
 REPORT_DIR   = PROJECT_ROOT / "bin" / "output" / "reports"
 
+# ── rom_patch_helpers ────────────────────────────────────────────────────────────
+sys.path.insert(0, str(SCRIPT_DIR))
+try:
+    import rom_patch_helpers as _rph
+except ImportError:
+    _rph = None  # type: ignore[assignment]
+
 # ── Target strings for Provision.apk ───────────────────────────────────────────
 _PROVISION_STRINGS: dict[str, str] = {
     "miui14_global_start_up_slogan": "Lets rock with MEZO Development Project",
@@ -37,10 +44,12 @@ _PROVISION_STRINGS: dict[str, str] = {
     "provision_complete_text":       "Ready to Rock with DeadZoneROM!",
 }
 
-# ── Provision APK search paths (relative to work_dir) ──────────────────────────
+# ── Provision APK search paths (relative to work_dir and build/baserom/images) ─
 _PROVISION_APK_PATHS = [
     "system_ext/priv-app/Provision/Provision.apk",
     "system_ext/system_ext/priv-app/Provision/Provision.apk",
+    "product/priv-app/Provision/Provision.apk",
+    "product/product/priv-app/Provision/Provision.apk",
 ]
 
 # ── MiuiSystemUI APK search paths ──────────────────────────────────────────────
@@ -104,6 +113,7 @@ def _prov_entry(
     status: str,
     detail: str = "",
     error: Optional[str] = None,
+    searched_paths: Optional[list] = None,
 ) -> dict:
     return {
         "patch_name": "provision_mezo_strings",
@@ -112,6 +122,7 @@ def _prov_entry(
         "status": status,
         "detail": detail,
         "error": error,
+        "searched_paths": searched_paths or [],
     }
 
 
@@ -236,41 +247,58 @@ def _find_apktool() -> Optional[Path]:
     return None
 
 
-def _decompile_apk(apk_path: Path, out_dir: Path) -> bool:
+def _decompile_apk(apk_path: Path, out_dir: Path) -> tuple[bool, str, str]:
+    """Returns (ok, stdout, stderr)."""
+    if _rph is not None:
+        r = _rph.decompile_apk(apk_path, out_dir)
+        return r["ok"], r["stdout"], r["stderr"]
     apktool = _find_apktool()
     if not apktool:
-        return False
+        return False, "", "apktool.jar not found"
     try:
         r = subprocess.run(
             ["java", "-jar", str(apktool), "d", "-f", str(apk_path), "-o", str(out_dir)],
-            capture_output=True, timeout=180,
+            capture_output=True, text=True, timeout=300,
         )
-        return r.returncode == 0
-    except Exception:
-        return False
+        return r.returncode == 0, r.stdout[-2000:], r.stderr[-2000:]
+    except Exception as exc:
+        return False, "", str(exc)
 
 
-def _recompile_apk(unpacked_dir: Path, out_apk: Path) -> bool:
+def _recompile_apk(unpacked_dir: Path, out_apk: Path) -> tuple[bool, str, str]:
+    """Returns (ok, stdout, stderr)."""
+    if _rph is not None:
+        r = _rph.rebuild_apk(unpacked_dir, out_apk)
+        return r["ok"], r["stdout"], r["stderr"]
     apktool = _find_apktool()
     if not apktool:
-        return False
+        return False, "", "apktool.jar not found"
     try:
         r = subprocess.run(
-            ["java", "-jar", str(apktool), "b", str(unpacked_dir), "-o", str(out_apk)],
-            capture_output=True, timeout=180,
+            ["java", "-jar", str(apktool), "b", "-f", str(unpacked_dir), "-o", str(out_apk)],
+            capture_output=True, text=True, timeout=300,
         )
-        return r.returncode == 0
-    except Exception:
-        return False
+        return r.returncode == 0, r.stdout[-2000:], r.stderr[-2000:]
+    except Exception as exc:
+        return False, "", str(exc)
 
 
-def _find_apk(work_dir: Path, search_paths: list[str], apk_name: str) -> Optional[Path]:
+def _find_apk(work_dir: Path, search_paths: list[str], apk_name: str) -> Optional[tuple[Path, list[str]]]:
+    """Returns (apk_path, searched_paths) or None if not found."""
+    if _rph is not None:
+        result = _rph.find_file_in_rom(work_dir, search_paths)
+        if result["found"]:
+            return Path(result["found_path"]), result["searched_paths"]
+        return None
+    searched: list[str] = []
     for rel in search_paths:
         p = work_dir / rel
+        searched.append(str(p))
         if p.exists():
-            return p
+            return p, searched
+    # rglob fallback
     for p in work_dir.rglob(apk_name):
-        return p
+        return p, searched
     return None
 
 
@@ -279,24 +307,27 @@ def _get_or_decompile(
     unpacked_name: str,
     apk_search_paths: list[str],
     apk_name: str,
-) -> tuple[Optional[Path], bool, Optional[Path]]:
+) -> tuple[Optional[Path], bool, Optional[Path], list[str]]:
     """
-    Returns (unpacked_dir, we_decompiled, apk_path).
-    If pre-decompiled dir exists: (dir, False, None).
-    If APK found: decompile to tmp dir → (tmp_dir, True, apk_path).
-    Otherwise: (None, False, None).
+    Returns (unpacked_dir, we_decompiled, apk_path, searched_paths).
+    If pre-decompiled dir exists: (dir, False, None, []).
+    If APK found: decompile to tmp dir → (tmp_dir, True, apk_path, searched).
+    Otherwise: (None, False, None, searched).
     """
     pre = work_dir / unpacked_name
     if pre.is_dir():
-        return pre, False, None
-    apk = _find_apk(work_dir, apk_search_paths, apk_name)
-    if apk:
+        return pre, False, None, []
+    found = _find_apk(work_dir, apk_search_paths, apk_name)
+    if found:
+        apk, searched = found
         tmp = Path(tempfile.mkdtemp(prefix=f"dz_{unpacked_name}_"))
-        if _decompile_apk(apk, tmp):
-            return tmp, True, apk
+        ok, _out, _err = _decompile_apk(apk, tmp)
+        if ok:
+            return tmp, True, apk, searched
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
-    return None, False, None
+        return None, False, apk, searched
+    return None, False, None, []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -419,7 +450,7 @@ def _patch_provision_strings_in_dir(provision_dir: Path, report: list) -> None:
 
 def apply_provision_strings(work_dir: Path, report: list) -> None:
     """Patch Provision.apk MEZO branding strings."""
-    unpacked, we_decompiled, apk_path = _get_or_decompile(
+    unpacked, we_decompiled, apk_path, searched = _get_or_decompile(
         work_dir, "provision_unpacked",
         _PROVISION_APK_PATHS, "Provision.apk",
     )
@@ -427,18 +458,27 @@ def apply_provision_strings(work_dir: Path, report: list) -> None:
     if unpacked is None:
         report.append(_prov_entry(
             str(work_dir / "system_ext/priv-app/Provision/Provision.apk"),
-            found=False, status="skipped",
-            detail="Provision.apk not found and no provision_unpacked dir — SKIPPED",
+            found=False, status="skipped_not_found",
+            detail="Provision.apk not found and no provision_unpacked dir — SKIPPED_NOT_FOUND",
+            searched_paths=searched,
         ))
         return
 
     try:
         _patch_provision_strings_in_dir(unpacked, report)
         if we_decompiled and apk_path:
-            if not _recompile_apk(unpacked, apk_path):
+            ok, stdout, stderr = _recompile_apk(unpacked, apk_path)
+            if not ok:
+                apktool = _find_apktool()
                 report.append(_prov_entry(
-                    str(apk_path), found=True, status="failed",
-                    error="Provision strings rebuild failed — patched strings.xml not written back to APK (check apktool stdout/stderr above)",
+                    str(apk_path), found=True, status="failed_optional",
+                    error=(
+                        f"Provision strings rebuild failed — patched strings.xml not written back to APK. "
+                        f"tool={apktool}  "
+                        f"stdout={stdout[-500:] if stdout else '(empty)'}  "
+                        f"stderr={stderr[-500:] if stderr else '(empty)'}"
+                    ),
+                    searched_paths=searched,
                 ))
     finally:
         if we_decompiled:
@@ -561,7 +601,7 @@ def apply_miuisystemui_volte_cn_patch(
         ))
         return
 
-    unpacked, we_decompiled, apk_path = _get_or_decompile(
+    unpacked, we_decompiled, apk_path, searched = _get_or_decompile(
         work_dir, "miuisystemui_unpacked",
         _SYSUI_APK_PATHS, "MiuiSystemUI.apk",
     )
@@ -569,18 +609,19 @@ def apply_miuisystemui_volte_cn_patch(
     if unpacked is None:
         report.append(_sysui_entry(
             "MiuiSystemUI", str(work_dir),
-            found=False, status="skipped",
-            detail="MiuiSystemUI.apk not found and no miuisystemui_unpacked dir — SKIPPED",
+            found=False, status="skipped_not_found",
+            detail="MiuiSystemUI.apk not found and no miuisystemui_unpacked dir — SKIPPED_NOT_FOUND",
         ))
         return
 
     try:
         _patch_sysui_in_dir(unpacked, report)
         if we_decompiled and apk_path:
-            if not _recompile_apk(unpacked, apk_path):
+            ok, stdout, stderr = _recompile_apk(unpacked, apk_path)
+            if not ok:
                 report.append(_sysui_entry(
-                    "MiuiSystemUI", str(apk_path), found=True, status="failed",
-                    error="apktool recompile failed",
+                    "MiuiSystemUI", str(apk_path), found=True, status="failed_optional",
+                    error=f"rebuild failed: stdout={stdout[-300:]} stderr={stderr[-300:]}",
                 ))
     finally:
         if we_decompiled:
@@ -721,7 +762,7 @@ def _patch_powerkeeper_in_dir(pk_dir: Path, report: list) -> None:
 
 def apply_powerkeeper_cn_global_patches(work_dir: Path, report: list) -> None:
     """Apply PowerKeeper CN/Global Build flag patches."""
-    unpacked, we_decompiled, apk_path = _get_or_decompile(
+    unpacked, we_decompiled, apk_path, searched = _get_or_decompile(
         work_dir, "powerkeeper_unpacked",
         _PK_APK_PATHS, "PowerKeeper.apk",
     )
@@ -729,19 +770,20 @@ def apply_powerkeeper_cn_global_patches(work_dir: Path, report: list) -> None:
     if unpacked is None:
         report.append(_pk_entry(
             "PowerKeeper", str(work_dir),
-            found=False, status="skipped",
+            found=False, status="skipped_not_found",
             skipped_reason="PowerKeeper.apk not found",
-            detail="PowerKeeper.apk not found and no powerkeeper_unpacked dir — SKIPPED",
+            detail="PowerKeeper.apk not found and no powerkeeper_unpacked dir — SKIPPED_NOT_FOUND",
         ))
         return
 
     try:
         _patch_powerkeeper_in_dir(unpacked, report)
         if we_decompiled and apk_path:
-            if not _recompile_apk(unpacked, apk_path):
+            ok, stdout, stderr = _recompile_apk(unpacked, apk_path)
+            if not ok:
                 report.append(_pk_entry(
-                    "PowerKeeper", str(apk_path), found=True, status="failed",
-                    error="apktool recompile failed",
+                    "PowerKeeper", str(apk_path), found=True, status="failed_optional",
+                    error=f"rebuild failed: stdout={stdout[-300:]} stderr={stderr[-300:]}",
                 ))
     finally:
         if we_decompiled:
@@ -773,13 +815,18 @@ def apply_lite_apk_patches(
 
     all_entries = prov_entries + sysui_entries + pk_entries
 
+    _SKIPPED_STATUSES = {"skipped", "skipped_not_found", "skipped_not_target_rom"}
+    _FAILED_STATUSES  = {"failed", "failed_optional", "failed_fatal"}
+
     def _summary(entries: list[dict]) -> dict:
         return {
             "enabled": True,
-            "total_scanned":  len(entries),
-            "total_modified": sum(1 for e in entries if e["status"] == "changed"),
-            "total_skipped":  sum(1 for e in entries if e["status"] == "skipped"),
-            "total_failed":   sum(1 for e in entries if e["status"] == "failed"),
+            "total_scanned":          len(entries),
+            "total_modified":         sum(1 for e in entries if e["status"] == "changed"),
+            "total_skipped":          sum(1 for e in entries if e["status"] in _SKIPPED_STATUSES),
+            "total_skipped_not_found": sum(1 for e in entries if e["status"] == "skipped_not_found"),
+            "total_failed":           sum(1 for e in entries if e["status"] in _FAILED_STATUSES),
+            "total_failed_optional":  sum(1 for e in entries if e["status"] == "failed_optional"),
             "results": entries,
         }
 
@@ -792,10 +839,12 @@ def apply_lite_apk_patches(
             "powerkeeper_cn_global":     _summary(pk_entries),
         },
         "totals": {
-            "total_scanned":  len(all_entries),
-            "total_modified": sum(1 for e in all_entries if e["status"] == "changed"),
-            "total_skipped":  sum(1 for e in all_entries if e["status"] == "skipped"),
-            "total_failed":   sum(1 for e in all_entries if e["status"] == "failed"),
+            "total_scanned":          len(all_entries),
+            "total_modified":         sum(1 for e in all_entries if e["status"] == "changed"),
+            "total_skipped":          sum(1 for e in all_entries if e["status"] in _SKIPPED_STATUSES),
+            "total_skipped_not_found": sum(1 for e in all_entries if e["status"] == "skipped_not_found"),
+            "total_failed":           sum(1 for e in all_entries if e["status"] in _FAILED_STATUSES),
+            "total_failed_optional":  sum(1 for e in all_entries if e["status"] == "failed_optional"),
         },
     }
 
@@ -821,14 +870,16 @@ def _write_reports(report: dict) -> None:
     for patch_key, patch_data in report["patches"].items():
         lines += [
             f"[{patch_key.upper()}]",
-            f"  Scanned  : {patch_data['total_scanned']}",
-            f"  Modified : {patch_data['total_modified']}",
-            f"  Skipped  : {patch_data['total_skipped']}",
-            f"  Failed   : {patch_data['total_failed']}",
+            f"  Scanned        : {patch_data['total_scanned']}",
+            f"  Modified       : {patch_data['total_modified']}",
+            f"  Skipped        : {patch_data['total_skipped']}",
+            f"  Skipped (NF)   : {patch_data.get('total_skipped_not_found', 0)}",
+            f"  Failed         : {patch_data['total_failed']}",
+            f"  Failed (opt.)  : {patch_data.get('total_failed_optional', 0)}",
             "",
         ]
         for e in patch_data["results"]:
-            tag = e["status"].upper().ljust(7)
+            tag = e["status"].upper().ljust(16)
             found_tag = "FOUND" if e["found"] else "MISSING"
             cls = e.get("target_class", "")
             tf = e.get("target_file", "")
@@ -837,16 +888,23 @@ def _write_reports(report: dict) -> None:
                 lines.append(f"           {e['detail']}")
             if e.get("error"):
                 lines.append(f"           ERROR: {e['error']}")
+            sp = e.get("searched_paths")
+            if sp:
+                lines.append(f"           Searched paths ({len(sp)}):")
+                for sp_item in sp:
+                    lines.append(f"             - {sp_item}")
         lines.append("")
 
     t = report["totals"]
     lines += [
         "=" * 72,
         "TOTALS",
-        f"  Scanned  : {t['total_scanned']}",
-        f"  Modified : {t['total_modified']}",
-        f"  Skipped  : {t['total_skipped']}",
-        f"  Failed   : {t['total_failed']}",
+        f"  Scanned        : {t['total_scanned']}",
+        f"  Modified       : {t['total_modified']}",
+        f"  Skipped        : {t['total_skipped']}",
+        f"  Skipped (NF)   : {t.get('total_skipped_not_found', 0)}",
+        f"  Failed         : {t['total_failed']}",
+        f"  Failed (opt.)  : {t.get('total_failed_optional', 0)}",
         "=" * 72,
     ]
     txt_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -862,7 +920,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="DeadZone MEZO Lite APK Patches")
     parser.add_argument("--work-dir", required=True,
                         help="ROM work directory root")
-    parser.add_argument("--style", choices=["lite", "stable"], default="lite")
+    parser.add_argument("--style", choices=["lite", "plus", "stable", "legend", "ninja"], default="lite")
     parser.add_argument("--rom-os", default=None,
                         help="Override ROM OS detection (OS1/OS2/OS3)")
     parser.add_argument("--rom-region", default=None,

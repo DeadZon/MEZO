@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -24,6 +26,21 @@ from typing import Optional
 SCRIPT_DIR = Path(__file__).resolve().parent          # bin/scripts
 PROJECT_ROOT = SCRIPT_DIR.parent.parent               # project root
 REPORT_DIR = PROJECT_ROOT / "bin" / "output" / "reports"
+
+# ── rom_patch_helpers (provides path resolution + decompile/rebuild) ──────────
+sys.path.insert(0, str(SCRIPT_DIR))
+try:
+    import rom_patch_helpers as _rph
+except ImportError:
+    _rph = None  # type: ignore[assignment]
+
+# JAR candidates searched when pre-decompiled dirs are absent
+_FRAMEWORK_JAR_CANDS    = ["system/framework/framework.jar",
+                            "system/system/framework/framework.jar"]
+_SERVICES_JAR_CANDS     = ["system/framework/services.jar",
+                            "system/system/framework/services.jar"]
+_MIUI_SERVICES_JAR_CANDS = ["system/framework/miui-services.jar",
+                              "system/system/framework/miui-services.jar"]
 
 # ── Report entry schema ────────────────────────────────────────────────────────
 # {patch_name, target_file, found, status, detail, error}
@@ -1245,13 +1262,100 @@ def apply_miui_services_cn_global_patches(work_dir: Path, report: list) -> None:
 # Stable entry point — runs all 4 patches and writes reports
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _decompile_framework_jars(work_dir: Path) -> dict[str, dict]:
+    """Decompile framework JARs to *_unpacked/ dirs if those dirs are missing.
+
+    Returns a dict mapping unpacked_dir_name -> {decompiled, jar_path, unpacked_dir, result}.
+    Only entries where we decompiled (not pre-existing) are included so the caller
+    knows what to rebuild+restore afterward.
+    """
+    if _rph is None:
+        return {}
+
+    jar_map = {
+        "framework_unpacked":     _FRAMEWORK_JAR_CANDS,
+        "services_unpacked":      _SERVICES_JAR_CANDS,
+        "miui_services_unpacked": _MIUI_SERVICES_JAR_CANDS,
+    }
+    outcomes: dict[str, dict] = {}
+
+    for name, cands in jar_map.items():
+        unpacked = _find_unpacked(work_dir, name)
+        if unpacked.is_dir():
+            continue  # already available — no decompile needed
+
+        jar_result = _rph.find_file_in_rom(work_dir, cands)
+        if not jar_result["found"]:
+            outcomes[name] = {
+                "decompiled": False,
+                "jar_path": None,
+                "unpacked_dir": str(work_dir / name),
+                "searched_paths": jar_result["searched_paths"],
+                "reason": jar_result["reason"],
+            }
+            continue
+
+        jar_path = Path(jar_result["found_path"])
+        out_dir  = work_dir / name
+        decomp   = _rph.decompile_apk(jar_path, out_dir)
+
+        if decomp["ok"]:
+            print(f"[DeadZone] Decompiled {jar_path.name} → {out_dir.name}/")
+            outcomes[name] = {
+                "decompiled":   True,
+                "jar_path":     str(jar_path),
+                "unpacked_dir": str(out_dir),
+                "searched_paths": jar_result["searched_paths"],
+                "reason":       "",
+            }
+        else:
+            print(f"[DeadZone] WARN: decompile failed for {jar_path.name}: {decomp['reason']}")
+            outcomes[name] = {
+                "decompiled":   False,
+                "jar_path":     str(jar_path),
+                "unpacked_dir": str(out_dir),
+                "searched_paths": jar_result["searched_paths"],
+                "reason":       decomp["reason"],
+                "decomp_stdout": decomp["stdout"],
+                "decomp_stderr": decomp["stderr"],
+            }
+
+    return outcomes
+
+
+def _rebuild_framework_jars(decompile_outcomes: dict[str, dict]) -> None:
+    """Rebuild and restore JARs for any entry where *decompiled* is True."""
+    if _rph is None:
+        return
+
+    for name, info in decompile_outcomes.items():
+        if not info["decompiled"]:
+            continue
+        unpacked_dir = Path(info["unpacked_dir"])
+        jar_path     = Path(info["jar_path"])
+
+        rebuild = _rph.rebuild_apk(unpacked_dir, jar_path)
+        if rebuild["ok"]:
+            print(f"[DeadZone] Rebuilt {jar_path.name} successfully.")
+        else:
+            print(f"[DeadZone] WARN: rebuild failed for {jar_path.name}: {rebuild['reason']}")
+
+        shutil.rmtree(unpacked_dir, ignore_errors=True)
+
+
 def apply_stable_framework_patches(work_dir: Path) -> dict:
     """
-    Run all three framework patches for Stable style.
+    Run all four framework patches for the active style.
     Writes output/reports/deadzone_patch_report.{txt,json}.
     Returns the full report dict.
+
+    If pre-decompiled *_unpacked/ dirs are absent, attempts to decompile
+    the framework JARs first (using rom_patch_helpers + apktool).
     """
     work_dir = Path(work_dir).resolve()
+
+    # Decompile JARs when unpacked dirs are missing
+    decompile_outcomes = _decompile_framework_jars(work_dir)
 
     sig_entries:  list[dict] = []
     ic_entries:   list[dict] = []
@@ -1263,21 +1367,25 @@ def apply_stable_framework_patches(work_dir: Path) -> dict:
     apply_fix_bootloop_a15(work_dir, bl_entries)
     apply_miui_services_cn_global_patches(work_dir, msvc_entries)
 
+    # Rebuild JARs we decompiled
+    _rebuild_framework_jars(decompile_outcomes)
+
     all_entries = sig_entries + ic_entries + bl_entries + msvc_entries
 
     def _summary(entries: list[dict]) -> dict:
         return {
             "enabled": True,
-            "total_scanned": len(entries),
+            "total_scanned":  len(entries),
             "total_modified": sum(1 for e in entries if e["status"] == "changed"),
-            "total_skipped": sum(1 for e in entries if e["status"] == "skipped"),
-            "total_failed": sum(1 for e in entries if e["status"] == "failed"),
+            "total_skipped":  sum(1 for e in entries if e["status"] in ("skipped", "skipped_not_found")),
+            "total_failed":   sum(1 for e in entries if e["status"] in ("failed", "failed_optional")),
             "results": entries,
         }
 
     report = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "work_dir": str(work_dir),
+        "decompile_info": decompile_outcomes,
         "patches": {
             "signature_verification_bypass":     _summary(sig_entries),
             "invoke_custom_handling":             _summary(ic_entries),
@@ -1287,8 +1395,8 @@ def apply_stable_framework_patches(work_dir: Path) -> dict:
         "totals": {
             "total_scanned":  len(all_entries),
             "total_modified": sum(1 for e in all_entries if e["status"] == "changed"),
-            "total_skipped":  sum(1 for e in all_entries if e["status"] == "skipped"),
-            "total_failed":   sum(1 for e in all_entries if e["status"] == "failed"),
+            "total_skipped":  sum(1 for e in all_entries if e["status"] in ("skipped", "skipped_not_found")),
+            "total_failed":   sum(1 for e in all_entries if e["status"] in ("failed", "failed_optional")),
         },
     }
 
@@ -1313,6 +1421,21 @@ def _write_reports(report: dict) -> None:
         "=" * 72,
         "",
     ]
+    # Decompile info
+    decompile_info = report.get("decompile_info", {})
+    if decompile_info:
+        lines += ["[JAR DECOMPILE]"]
+        for name, info in decompile_info.items():
+            ok_tag = "OK" if info.get("decompiled") else "SKIP"
+            jar    = info.get("jar_path") or "(not found)"
+            reason = info.get("reason") or ""
+            lines.append(f"  [{ok_tag}] {name}: {jar}")
+            if reason:
+                lines.append(f"       Reason: {reason}")
+            for sp in info.get("searched_paths", []):
+                lines.append(f"       Searched: {sp}")
+        lines.append("")
+
     for patch_key, patch_data in report["patches"].items():
         lines += [
             f"[{patch_key.upper()}]",
@@ -1324,13 +1447,15 @@ def _write_reports(report: dict) -> None:
             "",
         ]
         for e in patch_data["results"]:
-            status_tag = e["status"].upper().ljust(7)
+            status_tag = e["status"].upper().ljust(16)
             found_tag = "FOUND" if e["found"] else "MISSING"
             lines.append(f"  [{status_tag}] [{found_tag}] {e['target_file']}")
-            if e["detail"]:
+            if e.get("detail"):
                 lines.append(f"           {e['detail']}")
-            if e["error"]:
+            if e.get("error"):
                 lines.append(f"           ERROR: {e['error']}")
+            for sp in e.get("searched_paths", []):
+                lines.append(f"           Searched: {sp}")
         lines.append("")
 
     t = report["totals"]
