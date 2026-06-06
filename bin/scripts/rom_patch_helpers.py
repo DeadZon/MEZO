@@ -283,8 +283,19 @@ _SERVICES_JAR_CANDIDATES = [
 ]
 
 _MIUI_SERVICES_JAR_CANDIDATES = [
+    # system_ext — primary MIUI/HyperOS location
+    "system_ext/framework/miui-services.jar",
+    "system_ext/system_ext/framework/miui-services.jar",
+    "system_ext/miui-services.jar",
+    "system_ext/fremawork/miui-services.jar",            # typo fallback seen in some ROMs
+    "system_ext/system_ext/fremawork/miui-services.jar",
+    # system
     "system/framework/miui-services.jar",
     "system/system/framework/miui-services.jar",
+    "system/system_ext/framework/miui-services.jar",
+    # product
+    "product/framework/miui-services.jar",
+    "product/product/framework/miui-services.jar",
 ]
 
 
@@ -371,6 +382,123 @@ def _find_apktool() -> Optional[Path]:
         for jar in apktool_dir.glob("apktool*.jar"):
             return jar
     return None
+
+
+def find_apkeditor() -> Optional[Path]:
+    """Return path to APKEditor jar (apke.jar / APKEditor.jar), or None."""
+    for name in ("apke.jar", "APKEditor.jar", "apkeditor.jar"):
+        for base in (BIN_DIR / "apktool", BIN_DIR / "tools"):
+            p = base / name
+            if p.is_file():
+                return p
+    return None
+
+
+def find_smali_jar() -> Optional[Path]:
+    """Return path to smali assembler jar (smali-3.0.5.jar preferred), or None."""
+    for name in ("smali-3.0.5.jar", "smali.jar", "smali-2.5.2.jar", "smali-baksmali-3.0.5.jar"):
+        p = BIN_DIR / "apktool" / name
+        if p.is_file():
+            return p
+    return None
+
+
+def rebuild_apk_smali_only(
+    unpacked_dir: Path,
+    original_apk: Path,
+    out_apk: Path,
+) -> dict:
+    """Rebuild APK by compiling patched smali dirs back to DEX and repacking.
+
+    Completely avoids aapt2 — replaces only the DEX files in a copy of the
+    original APK.  Smali dir → DEX name mapping:
+      smali/ or smali_classes/ → classes.dex
+      smali_classes2/          → classes2.dex   (etc.)
+
+    Returns {ok, tool, stdout, stderr, reason}.
+    """
+    import zipfile as _zf
+
+    smali_jar = find_smali_jar()
+    if smali_jar is None:
+        return {"ok": False, "tool": None, "stdout": "", "stderr": "",
+                "reason": "smali.jar not found in bin/apktool/"}
+
+    # Collect smali dirs and their target DEX names
+    smali_map: list[tuple[Path, str]] = []
+    for d in sorted(unpacked_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        n = d.name
+        if n in ("smali", "smali_classes"):
+            smali_map.append((d, "classes.dex"))
+        elif n.startswith("smali_classes"):
+            suffix = n[len("smali_classes"):]
+            smali_map.append((d, f"classes{suffix}.dex"))
+
+    if not smali_map:
+        return {"ok": False, "tool": str(smali_jar), "stdout": "", "stderr": "",
+                "reason": "No smali_classes* dirs found in unpacked_dir"}
+
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp(prefix="dz_smali_"))
+    all_stdout: list[str] = []
+    all_stderr: list[str] = []
+
+    try:
+        # 1. Compile each smali dir → DEX
+        compiled: list[tuple[Path, str]] = []
+        for smali_dir, dex_name in smali_map:
+            dex_out = tmp_dir / dex_name
+            try:
+                r = subprocess.run(
+                    ["java", "-jar", str(smali_jar), "a", str(smali_dir), "-o", str(dex_out)],
+                    capture_output=True, text=True, timeout=300,
+                )
+                all_stdout.append(r.stdout[-500:])
+                all_stderr.append(r.stderr[-500:])
+                if r.returncode != 0 or not dex_out.is_file():
+                    return {
+                        "ok": False, "tool": str(smali_jar),
+                        "stdout": "\n".join(all_stdout),
+                        "stderr": "\n".join(all_stderr),
+                        "reason": f"smali compile failed for {smali_dir.name}: rc={r.returncode}",
+                    }
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as exc:
+                return {"ok": False, "tool": str(smali_jar), "stdout": "", "stderr": "",
+                        "reason": str(exc)}
+            compiled.append((dex_out, dex_name))
+
+        # 2. Rewrite APK — copy all entries except replaced DEX, add new DEX uncompressed
+        replace_names = {dex_name for _, dex_name in compiled}
+        try:
+            with _zf.ZipFile(str(original_apk), "r") as orig_zf:
+                with _zf.ZipFile(str(out_apk), "w") as new_zf:
+                    for info in orig_zf.infolist():
+                        if info.filename in replace_names:
+                            continue
+                        new_zf.writestr(info, orig_zf.read(info.filename))
+                    for dex_path, dex_name in compiled:
+                        new_zf.write(str(dex_path), dex_name,
+                                     compress_type=_zf.ZIP_STORED)
+        except Exception as exc:
+            return {"ok": False, "tool": str(smali_jar), "stdout": "", "stderr": "",
+                    "reason": f"zip repack failed: {exc}"}
+
+        if not out_apk.is_file():
+            return {"ok": False, "tool": str(smali_jar), "stdout": "", "stderr": "",
+                    "reason": "output APK not created"}
+
+        return {
+            "ok":     True,
+            "tool":   str(smali_jar),
+            "stdout": "\n".join(all_stdout),
+            "stderr": "\n".join(all_stderr),
+            "reason": "",
+        }
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def decompile_apk(apk_path: Path, out_dir: Path, force: bool = True) -> dict:

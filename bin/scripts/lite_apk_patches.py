@@ -266,7 +266,7 @@ def _collect_smali_dirs(unpacked_dir: Path) -> list[Path]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# apktool helpers
+# apktool / APKEditor / smali helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _find_apktool() -> Optional[Path]:
@@ -276,6 +276,32 @@ def _find_apktool() -> Optional[Path]:
     if apktool_dir.is_dir():
         for jar in apktool_dir.glob("apktool*.jar"):
             return jar
+    return None
+
+
+def _find_apkeditor_jar() -> Optional[Path]:
+    if _rph is not None:
+        p = _rph.find_apkeditor()
+        if p:
+            return p
+    apktool_dir = SCRIPT_DIR.parent / "apktool"
+    for name in ("apke.jar", "APKEditor.jar", "apkeditor.jar"):
+        p = apktool_dir / name
+        if p.is_file():
+            return p
+    return None
+
+
+def _find_smali_jar_path() -> Optional[Path]:
+    if _rph is not None:
+        p = _rph.find_smali_jar()
+        if p:
+            return p
+    apktool_dir = SCRIPT_DIR.parent / "apktool"
+    for name in ("smali-3.0.5.jar", "smali.jar", "smali-2.5.2.jar"):
+        p = apktool_dir / name
+        if p.is_file():
+            return p
     return None
 
 
@@ -434,6 +460,197 @@ def _rebuild_and_restore(
         }
 
 
+def _restore_via_move(tmp_out: Path, original_apk: Path) -> dict:
+    """Shared restore-in-place used by APKEditor and smali-zip fallbacks."""
+    import shutil as _sh
+    if _rph is not None:
+        return _rph.restore_patched_file_in_place(tmp_out, original_apk, original_apk.name)
+    try:
+        if original_apk.exists():
+            original_apk.unlink()
+        _sh.move(str(tmp_out), str(original_apk))
+        try:
+            original_apk.chmod(0o644)
+            perm = "0644"
+        except Exception:
+            perm = "0644 (chmod failed)"
+        return {"restored": True, "restored_path": str(original_apk),
+                "rebuilt_path": str(tmp_out), "permission": perm, "error": None}
+    except Exception as exc:
+        return {"restored": False, "restored_path": None,
+                "rebuilt_path": str(tmp_out), "permission": None, "error": str(exc)}
+
+
+def _rebuild_provision_with_apkeditor(original_apk: Path, expected_name: str) -> dict:
+    """APKEditor fallback for Provision.apk: fresh decode → re-apply string patches → build.
+
+    Completely avoids aapt2 by using APKEditor's ArscLib-based resource compiler.
+    Returns same shape as _rebuild_and_restore().
+    """
+    apke = _find_apkeditor_jar()
+    if not apke:
+        return {"ok": False, "rebuilt_path": None, "restored_path": None,
+                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+                "error": "APKEditor not found — cannot use fallback rebuild"}
+
+    ae_dir = Path(tempfile.mkdtemp(prefix="dz_prov_ae_"))
+    tmp_out = Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(original_apk.parent)))
+
+    try:
+        # 1. APKEditor decode
+        r_dec = subprocess.run(
+            ["java", "-jar", str(apke), "d", "-f", "-i", str(original_apk), "-o", str(ae_dir)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if r_dec.returncode != 0:
+            return {
+                "ok": False, "rebuilt_path": None, "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "stdout": r_dec.stdout[-500:], "stderr": r_dec.stderr[-500:],
+                "error": f"APKEditor decode rc={r_dec.returncode}: {r_dec.stderr[-300:]}",
+            }
+
+        # 2. Re-apply Provision string patches to the APKEditor-decoded dir
+        _patch_provision_strings_in_dir(ae_dir, [])
+
+        # 3. APKEditor build
+        r_bld = subprocess.run(
+            ["java", "-jar", str(apke), "b", "-f", "-i", str(ae_dir), "-o", str(tmp_out)],
+            capture_output=True, text=True, timeout=300,
+        )
+        if r_bld.returncode != 0 or not tmp_out.is_file():
+            tmp_out.unlink(missing_ok=True)
+            return {
+                "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "stdout": r_bld.stdout[-500:], "stderr": r_bld.stderr[-500:],
+                "error": f"APKEditor build rc={r_bld.returncode}: {r_bld.stderr[-300:]}",
+            }
+
+        # 4. Restore in place
+        restore = _restore_via_move(tmp_out, original_apk)
+        return {
+            "ok":             restore["restored"],
+            "rebuilt_path":   restore.get("rebuilt_path"),
+            "restored_path":  restore.get("restored_path"),
+            "restore_in_place": restore["restored"],
+            "permission":     restore.get("permission"),
+            "stdout":         r_bld.stdout[-500:],
+            "stderr":         r_bld.stderr[-500:],
+            "error":          restore.get("error"),
+        }
+    except Exception as exc:
+        tmp_out.unlink(missing_ok=True)
+        return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+                "error": str(exc)}
+    finally:
+        import shutil
+        shutil.rmtree(ae_dir, ignore_errors=True)
+
+
+def _rebuild_miuisystemui_smali_only(
+    unpacked_dir: Path,
+    original_apk: Path,
+    expected_name: str,
+) -> dict:
+    """Smali-only fallback for MiuiSystemUI.apk: compile smali → DEX, repack into APK copy.
+
+    Replaces only the DEX entries — original resources stay binary-unchanged.
+    Completely avoids aapt2.
+    Returns same shape as _rebuild_and_restore().
+    """
+    if _rph is not None:
+        smali_res = _rph.rebuild_apk_smali_only(
+            unpacked_dir, original_apk,
+            Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(original_apk.parent))),
+        )
+        if not smali_res["ok"]:
+            return {"ok": False, "rebuilt_path": None, "restored_path": None,
+                    "restore_in_place": False, "permission": None,
+                    "stdout": smali_res.get("stdout", ""),
+                    "stderr": smali_res.get("stderr", ""),
+                    "error": smali_res.get("reason", "smali rebuild failed")}
+        tmp_out = Path(smali_res.get("out_path", "")) if "out_path" in smali_res else None
+
+    # Inline implementation (mirrors rom_patch_helpers.rebuild_apk_smali_only)
+    smali_jar = _find_smali_jar_path()
+    if not smali_jar:
+        return {"ok": False, "rebuilt_path": None, "restored_path": None,
+                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+                "error": "smali.jar not found — cannot use smali-only fallback"}
+
+    smali_map: list[tuple[Path, str]] = []
+    for d in sorted(unpacked_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        n = d.name
+        if n in ("smali", "smali_classes"):
+            smali_map.append((d, "classes.dex"))
+        elif n.startswith("smali_classes"):
+            smali_map.append((d, f"classes{n[len('smali_classes'):]}.dex"))
+
+    if not smali_map:
+        return {"ok": False, "rebuilt_path": None, "restored_path": None,
+                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+                "error": "No smali dirs found in unpacked_dir"}
+
+    import zipfile as _zf
+    tmp_dir = Path(tempfile.mkdtemp(prefix="dz_msui_smali_"))
+    tmp_out = Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(original_apk.parent)))
+    all_stderr: list[str] = []
+
+    try:
+        compiled: list[tuple[Path, str]] = []
+        for smali_dir, dex_name in smali_map:
+            dex_out = tmp_dir / dex_name
+            r = subprocess.run(
+                ["java", "-jar", str(smali_jar), "a", str(smali_dir), "-o", str(dex_out)],
+                capture_output=True, text=True, timeout=300,
+            )
+            all_stderr.append(r.stderr[-300:])
+            if r.returncode != 0 or not dex_out.is_file():
+                return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                        "restore_in_place": False, "permission": None,
+                        "stdout": "", "stderr": "\n".join(all_stderr),
+                        "error": f"smali compile failed for {smali_dir.name}: rc={r.returncode}"}
+            compiled.append((dex_out, dex_name))
+
+        replace_names = {n for _, n in compiled}
+        with _zf.ZipFile(str(original_apk), "r") as orig_zf:
+            with _zf.ZipFile(str(tmp_out), "w") as new_zf:
+                for info in orig_zf.infolist():
+                    if info.filename not in replace_names:
+                        new_zf.writestr(info, orig_zf.read(info.filename))
+                for dex_path, dex_name in compiled:
+                    new_zf.write(str(dex_path), dex_name, compress_type=_zf.ZIP_STORED)
+
+        if not tmp_out.is_file():
+            return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                    "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+                    "error": "repack did not produce output APK"}
+
+        restore = _restore_via_move(tmp_out, original_apk)
+        return {
+            "ok":             restore["restored"],
+            "rebuilt_path":   restore.get("rebuilt_path"),
+            "restored_path":  restore.get("restored_path"),
+            "restore_in_place": restore["restored"],
+            "permission":     restore.get("permission"),
+            "stdout":         "",
+            "stderr":         "\n".join(all_stderr),
+            "error":          restore.get("error"),
+        }
+    except Exception as exc:
+        tmp_out.unlink(missing_ok=True)
+        return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+                "error": str(exc)}
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PART 1 — Provision.apk strings patch
 # ══════════════════════════════════════════════════════════════════════════════
@@ -560,12 +777,33 @@ def apply_provision_strings(work_dir: Path, report: list) -> None:
     )
 
     if unpacked is None:
-        report.append(_prov_entry(
-            str(work_dir / "system_ext/priv-app/Provision/Provision.apk"),
-            found=False, status="skipped_not_found",
-            detail="Provision.apk not found and no provision_unpacked dir — SKIPPED_NOT_FOUND",
-            searched_paths=searched,
-        ))
+        if apk_path is None:
+            # APK not found at all
+            report.append(_prov_entry(
+                str(work_dir / "system_ext/priv-app/Provision/Provision.apk"),
+                found=False, status="skipped_not_found",
+                detail="Provision.apk not found and no provision_unpacked dir — SKIPPED_NOT_FOUND",
+                searched_paths=searched,
+            ))
+            return
+        # APK found but apktool decompile failed — try APKEditor full-cycle fallback
+        apke_rr = _rebuild_provision_with_apkeditor(apk_path, "Provision.apk")
+        if apke_rr["ok"]:
+            report.append(_prov_entry(
+                str(apk_path), found=True, status="changed",
+                detail="Provision.apk patched+restored via APKEditor (apktool decompile failed)",
+                searched_paths=searched, original_path=str(apk_path),
+                rebuilt_path=apke_rr.get("rebuilt_path"),
+                restored_path=apke_rr.get("restored_path"),
+                restore_in_place=True, permission=apke_rr.get("permission"),
+            ))
+        else:
+            report.append(_prov_entry(
+                str(apk_path), found=True, status="failed_optional",
+                error=f"apktool decompile failed; APKEditor fallback: {apke_rr['error']}",
+                searched_paths=searched, original_path=str(apk_path),
+                restore_in_place=False,
+            ))
         return
 
     try:
@@ -573,13 +811,24 @@ def apply_provision_strings(work_dir: Path, report: list) -> None:
         if we_decompiled and apk_path:
             rr = _rebuild_and_restore(unpacked, apk_path, "Provision.apk")
             if not rr["ok"]:
-                report.append(_prov_entry(
-                    str(apk_path), found=True, status="failed_optional",
-                    error=rr["error"],
-                    searched_paths=searched,
-                    original_path=str(apk_path),
-                    rebuilt_path=rr["rebuilt_path"],
-                ))
+                # apktool rebuild (aapt2) failed — try APKEditor fresh decode+patch+build
+                apke_rr = _rebuild_provision_with_apkeditor(apk_path, "Provision.apk")
+                if apke_rr["ok"]:
+                    report.append(_prov_entry(
+                        str(apk_path), found=True, status="changed",
+                        detail="Provision.apk patched+restored via APKEditor fallback (apktool/aapt2 failed)",
+                        searched_paths=searched, original_path=str(apk_path),
+                        rebuilt_path=apke_rr.get("rebuilt_path"),
+                        restored_path=apke_rr.get("restored_path"),
+                        restore_in_place=True, permission=apke_rr.get("permission"),
+                    ))
+                else:
+                    report.append(_prov_entry(
+                        str(apk_path), found=True, status="failed_optional",
+                        error=f"apktool: {rr['error']} | apkeditor: {apke_rr['error']}",
+                        searched_paths=searched, original_path=str(apk_path),
+                        rebuilt_path=rr["rebuilt_path"], restore_in_place=False,
+                    ))
             else:
                 report.append(_prov_entry(
                     str(apk_path), found=True, status="changed",
@@ -737,13 +986,27 @@ def apply_miuisystemui_volte_cn_patch(
         if we_decompiled and apk_path:
             rr = _rebuild_and_restore(unpacked, apk_path, "MiuiSystemUI.apk")
             if not rr["ok"]:
-                report.append(_sysui_entry(
-                    "MiuiSystemUI", str(apk_path), found=True, status="failed_optional",
-                    error=rr["error"],
-                    original_path=str(apk_path),
-                    rebuilt_path=rr["rebuilt_path"],
-                    os_detection=os_det,
-                ))
+                # apktool/aapt2 rebuild failed — smali-only fallback (no resource recompile)
+                smali_rr = _rebuild_miuisystemui_smali_only(unpacked, apk_path, "MiuiSystemUI.apk")
+                if smali_rr["ok"]:
+                    report.append(_sysui_entry(
+                        "MiuiSystemUI", str(apk_path), found=True, status="changed",
+                        detail=f"MiuiSystemUI.apk patched+restored via smali-zip fallback (apktool/aapt2 failed, os={os_det})",
+                        original_path=str(apk_path),
+                        rebuilt_path=smali_rr.get("rebuilt_path"),
+                        restored_path=smali_rr.get("restored_path"),
+                        restore_in_place=True,
+                        permission=smali_rr.get("permission"),
+                        os_detection=os_det,
+                    ))
+                else:
+                    report.append(_sysui_entry(
+                        "MiuiSystemUI", str(apk_path), found=True, status="failed_optional",
+                        error=f"apktool: {rr['error']} | smali-zip: {smali_rr['error']}",
+                        original_path=str(apk_path),
+                        rebuilt_path=rr["rebuilt_path"],
+                        os_detection=os_det,
+                    ))
             else:
                 report.append(_sysui_entry(
                     "MiuiSystemUI", str(apk_path), found=True, status="changed",
@@ -1085,7 +1348,11 @@ def main() -> None:
           f"modified={t['total_modified']} "
           f"skipped={t['total_skipped']} "
           f"failed={t['total_failed']}")
-    if t["total_failed"] > 0:
+    # Only exit non-zero for non-optional failures — optional rebuild failures
+    # (failed_optional) are logged visibly but must not mark the whole mod as hard-failed
+    # so that style_mod_runner can continue and the Lite style report shows success.
+    non_optional_failures = t["total_failed"] - t.get("total_failed_optional", 0)
+    if non_optional_failures > 0:
         sys.exit(2)
 
 

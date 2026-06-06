@@ -294,6 +294,17 @@ def main() -> None:
     results = run_style(style, project_root)
     _write_reports(results, style, project_root)
 
+    # Always generate the aggregate full mod report — even if optional mods failed
+    try:
+        from deadzone_full_mod_report import write_full_report as _write_full_report
+        _write_full_report(
+            project_root / "bin" / "output" / "reports",
+            dz_style=style,
+        )
+    except Exception as _fmr_exc:
+        print(f"[MOD_RUNNER] WARN: deadzone_full_mod_report generation failed: {_fmr_exc}",
+              file=sys.stderr)
+
     # Exit 1 if any required mod failed
     failed_required = [
         r for r in results

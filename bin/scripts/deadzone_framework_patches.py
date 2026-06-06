@@ -39,8 +39,21 @@ _FRAMEWORK_JAR_CANDS    = ["system/framework/framework.jar",
                             "system/system/framework/framework.jar"]
 _SERVICES_JAR_CANDS     = ["system/framework/services.jar",
                             "system/system/framework/services.jar"]
-_MIUI_SERVICES_JAR_CANDS = ["system/framework/miui-services.jar",
-                              "system/system/framework/miui-services.jar"]
+_MIUI_SERVICES_JAR_CANDS = [
+    # system_ext — primary MIUI/HyperOS location
+    "system_ext/framework/miui-services.jar",
+    "system_ext/system_ext/framework/miui-services.jar",
+    "system_ext/miui-services.jar",
+    "system_ext/fremawork/miui-services.jar",            # typo fallback seen in some ROMs
+    "system_ext/system_ext/fremawork/miui-services.jar",
+    # system
+    "system/framework/miui-services.jar",
+    "system/system/framework/miui-services.jar",
+    "system/system_ext/framework/miui-services.jar",
+    # product
+    "product/framework/miui-services.jar",
+    "product/product/framework/miui-services.jar",
+]
 
 # ── Report entry schema ────────────────────────────────────────────────────────
 # {patch_name, target_file, found, status, detail, error}
@@ -1285,6 +1298,23 @@ def _decompile_framework_jars(work_dir: Path) -> dict[str, dict]:
             continue  # already available — no decompile needed
 
         jar_result = _rph.find_file_in_rom(work_dir, cands)
+
+        # Recursive fallback for miui-services.jar — scan entire build/baserom/images tree
+        if not jar_result["found"] and name == "miui_services_unpacked":
+            build_images = work_dir / "build" / "baserom" / "images"
+            if build_images.is_dir():
+                for found_jar in build_images.rglob("miui-services.jar"):
+                    if found_jar.is_file():
+                        jar_result = {
+                            "found":          True,
+                            "found_path":     str(found_jar),
+                            "searched_paths": jar_result["searched_paths"] + [
+                                f"(rglob under {build_images})"
+                            ],
+                            "reason": "",
+                        }
+                        break
+
         if not jar_result["found"]:
             outcomes[name] = {
                 "decompiled": False,
