@@ -163,6 +163,35 @@ def _patch_smali_invoke_custom(smali_file: Path) -> dict:
 
 _PATCH_SIG = "signature_verification_bypass"
 
+# Extra base paths (relative to work_dir) searched when unpacked dirs are absent
+_UNPACKED_EXTRA_BASES: tuple[str, ...] = ("build/baserom/images",)
+
+
+def _find_unpacked(work_dir: Path, name: str) -> Path:
+    """Return the first existing directory named *name* under work_dir or extra bases."""
+    direct = work_dir / name
+    if direct.is_dir():
+        return direct
+    for base_rel in _UNPACKED_EXTRA_BASES:
+        candidate = work_dir / base_rel / name
+        if candidate.is_dir():
+            return candidate
+    return direct  # fallback — callers check .exists()
+
+
+def _find_unpacked_path(work_dir: Path, dir_rel: str) -> Path:
+    """Resolve a sub-path like 'framework_unpacked/smali_classes2' under work_dir,
+    also checking _UNPACKED_EXTRA_BASES when the direct path does not exist."""
+    direct = work_dir / dir_rel
+    if direct.is_dir():
+        return direct
+    for base_rel in _UNPACKED_EXTRA_BASES:
+        candidate = work_dir / base_rel / dir_rel
+        if candidate.is_dir():
+            return candidate
+    return direct  # fallback — callers check .exists()
+
+
 def _find_one(root: Path, filename: str) -> Optional[Path]:
     for p in root.rglob(filename):
         return p
@@ -720,9 +749,9 @@ def apply_signature_verification_bypass(work_dir: Path, report: list) -> None:
     and miui_services_unpacked/smali_classes.
     Safe for A14/A15/A16 ROMs where some files/classes may be absent.
     """
-    fw = work_dir / "framework_unpacked"
-    sv = work_dir / "services_unpacked"
-    mi = work_dir / "miui_services_unpacked"
+    fw = _find_unpacked(work_dir, "framework_unpacked")
+    sv = _find_unpacked(work_dir, "services_unpacked")
+    mi = _find_unpacked(work_dir, "miui_services_unpacked")
 
     def _dir_entry(label: str, reason: str) -> dict:
         return _entry(_PATCH_SIG, label, found=False, status="skipped", detail=reason)
@@ -807,7 +836,7 @@ def apply_invoke_custom_handling(work_dir: Path, report: list) -> None:
     any_dir_found = False
 
     for base_dir_name in _INVOKE_CUSTOM_SMALI_DIRS:
-        base_dir = work_dir / base_dir_name
+        base_dir = _find_unpacked(work_dir, base_dir_name)
         if not base_dir.exists():
             report.append(_entry(_PATCH_IC, str(base_dir),
                                  found=False, status="skipped",
@@ -894,7 +923,7 @@ def apply_fix_bootloop_a15(work_dir: Path, report: list) -> None:
 
     for dir_rel, file_list in _BOOTLOOP_FILE_MAP.items():
         parent_name = dir_rel.split("/")[0]
-        dir_path = work_dir / Path(dir_rel)
+        dir_path = _find_unpacked_path(work_dir, dir_rel)
 
         if not dir_path.exists():
             if parent_name not in missing_parents:
@@ -1071,7 +1100,7 @@ def apply_miui_services_cn_global_patches(work_dir: Path, report: list) -> None:
     Patch C — Insert const/4 vX, 0x1 below IS_MIUI sget-boolean in 3 classes.
     Patch D — Insert const/4 v0, 0x0 above PolicyManager->CN_MODEL sput-boolean.
     """
-    mi = work_dir / "miui_services_unpacked"
+    mi = _find_unpacked(work_dir, "miui_services_unpacked")
 
     if not mi.exists():
         report.append(_msvc_entry(

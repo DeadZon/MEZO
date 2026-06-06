@@ -1,0 +1,128 @@
+{
+  "style": "legend",
+  "name": "DeadZone Legend",
+  "description": "Paid-tier ROM style. Inherits all Plus (and Lite) mods. Legend adds exclusive paid patches on top.",
+  "inherits": "plus",
+  "mods": [
+    {
+      "id": "signature_verification_bypass",
+      "name": "Signature Verification Bypass",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "legend"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": true,
+      "description": "Inherited from Plus/Lite. Bypasses APK signature verification."
+    },
+    {
+      "id": "invoke_custom_handling",
+      "name": "invoke-custom handling",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "legend"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": true,
+      "description": "Inherited from Plus/Lite. Handles invoke-custom smali instructions."
+    },
+    {
+      "id": "fix_bootloop_a15",
+      "name": "fix bootloop A15",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "legend"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": true,
+      "description": "Inherited from Plus/Lite. Fixes A15 bootloop."
+    },
+    {
+      "id": "miui_services_cn_global_patches",
+      "name": "miui-services CN/Global Build flag patches",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "legend"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": false,
+      "description": "Inherited from Plus/Lite. CN/Global Build flag patches."
+    },
+    {
+      "id": "lite_apk_patches",
+      "name": "Lite APK/App Patches",
+      "source_stage": "apk_patches",
+      "python_entry": "bin/scripts/lite_apk_patches.py",
+      "args": ["--style", "legend"],
+      "group": "lite_apk_patches",
+      "enabled": true,
+      "required": false,
+      "description": "Inherited from Plus/Lite. PowerKeeper, Provision, MiuiSystemUI patches."
+    },
+    {
+      "id": "kousei_kaorios_toolbox",
+      "name": "Kousei / Kaorios Toolbox",
+      "source_stage": "UpdateFile/DeadZone_KaoriosToolbox",
+      "python_entry": "bin/scripts/deadzone_kaorios_toolbox.py",
+      "args": ["--style", "legend"],
+      "enabled": true,
+      "required": false,
+      "description": "Inherited from Plus/Lite. Kaorios Toolbox integration."
+    },
+    {
+      "id": "os1_mods",
+      "name": "OS1 Mods",
+      "source_stage": "OS1",
+      "script_path": "bin/modfile/OS1/insmod.sh",
+      "enabled": true,
+      "required": false,
+      "description": "OS1 specific ROM mods."
+    },
+    {
+      "id": "os2_mods",
+      "name": "OS2 Mods",
+      "source_stage": "OS2",
+      "script_path": "bin/modfile/OS2/insmod.sh",
+      "enabled": true,
+      "required": false,
+      "description": "OS2 specific ROM mods."
+    },
+    {
+      "id": "os3_mods",
+      "name": "OS3 Mods",
+      "source_stage": "OS3",
+      "script_path": "bin/modfile/OS3/insmod.sh",
+      "enabled": true,
+      "required": false,
+      "description": "OS3 specific ROM mods."
+    },
+    {
+      "id": "universal_mods",
+      "name": "Universal Mods",
+      "source_stage": "Universal",
+      "script_path": "bin/modfile/Universal/insfile.sh",
+      "enabled": true,
+      "required": false,
+      "description": "Universal ROM mods."
+    },
+    {
+      "id": "updatefile_mods",
+      "name": "UpdateFile Mods",
+      "source_stage": "UpdateFile",
+      "script_path": "bin/modfile/UpdateFile/insupdate.sh",
+      "enabled": true,
+      "required": false,
+      "description": "UpdateFile ROM mods."
+    },
+    {
+      "id": "poco_launcher_to_miuihome_spoofing",
+      "name": "POCO Launcher to MiuiHome Spoofing",
+      "source_stage": "vendor_odm_props",
+      "python_entry": "bin/scripts/poco_launcher_spoof.py",
+      "args": ["--style", "legend"],
+      "enabled": true,
+      "required": false,
+      "description": "Inherited from Plus/Lite. POCO→Redmi brand spoof."
+    }
+  ]
+}

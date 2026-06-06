@@ -129,40 +129,42 @@ class TestLiteManifest:
 
 # ── 6–8. Style inheritance chain ─────────────────────────────────────────────
 class TestStyleInheritance:
-    def test_stable_inherits_lite(self):
+    def test_stable_delegates_to_plus(self):
+        """Stable is now a compat alias; it must delegate to Plus."""
         content = STABLE_INSMOD.read_text(encoding="utf-8")
-        assert "Lite/insmod.sh" in content or "Lite" in content, (
-            "Stable insmod.sh must call Lite/insmod.sh"
+        assert "Plus/insmod.sh" in content or "Plus" in content, (
+            "Stable insmod.sh must delegate to Plus (compat wrapper)"
         )
 
-    def test_legend_inherits_stable(self):
+    def test_legend_inherits_plus(self):
+        """Legend inherits Plus (→ Lite), not Stable directly."""
         content = LEGEND_INSMOD.read_text(encoding="utf-8")
-        assert "Stable/insmod.sh" in content or "Stable" in content, (
-            "Legend insmod.sh must call Stable/insmod.sh"
+        assert "Plus/insmod.sh" in content or "Plus" in content, (
+            "Legend insmod.sh must call Plus/insmod.sh"
         )
 
-    def test_ninja_inherits_stable(self):
+    def test_ninja_inherits_plus(self):
+        """Ninja inherits Plus (→ Lite), not Stable directly."""
         content = NINJA_INSMOD.read_text(encoding="utf-8")
-        assert "Stable/insmod.sh" in content or "Stable" in content, (
-            "Ninja insmod.sh must call Stable/insmod.sh"
+        assert "Plus/insmod.sh" in content or "Plus" in content, (
+            "Ninja insmod.sh must call Plus/insmod.sh"
         )
 
-    def test_stable_does_not_call_runner_directly(self):
+    def test_stable_is_compat_wrapper(self):
+        """Stable insmod.sh must clearly indicate it is a compat alias."""
         content = STABLE_INSMOD.read_text(encoding="utf-8")
-        # Stable should delegate to Lite (which calls runner), not call runner directly
-        # (It's fine if it does — but the main requirement is Lite is in the chain)
-        assert "Lite" in content, "Stable must reference Lite in its inheritance chain"
+        assert "Plus" in content, "Stable must delegate to Plus"
 
     def test_legend_error_propagates(self):
         content = LEGEND_INSMOD.read_text(encoding="utf-8")
         assert "exit 1" in content or "set -euo pipefail" in content, (
-            "Legend insmod.sh must propagate Stable failure (exit 1 or set -e)"
+            "Legend insmod.sh must propagate Plus failure (exit 1 or set -e)"
         )
 
     def test_ninja_error_propagates(self):
         content = NINJA_INSMOD.read_text(encoding="utf-8")
         assert "exit 1" in content or "set -euo pipefail" in content, (
-            "Ninja insmod.sh must propagate Stable failure (exit 1 or set -e)"
+            "Ninja insmod.sh must propagate Plus failure (exit 1 or set -e)"
         )
 
 

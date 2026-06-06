@@ -67,7 +67,7 @@ def _on(flag_key: str) -> str:
 def write_report() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    dz_style = os.environ.get("DZ_STYLE", "Stable")
+    dz_style = os.environ.get("DZ_STYLE", "Plus")
 
     # Grouped hierarchy section
     lines = [

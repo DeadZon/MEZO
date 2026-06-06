@@ -438,7 +438,7 @@ def apply_provision_strings(work_dir: Path, report: list) -> None:
             if not _recompile_apk(unpacked, apk_path):
                 report.append(_prov_entry(
                     str(apk_path), found=True, status="failed",
-                    error="apktool recompile failed — patched smali not written back to APK",
+                    error="Provision strings rebuild failed — patched strings.xml not written back to APK (check apktool stdout/stderr above)",
                 ))
     finally:
         if we_decompiled:

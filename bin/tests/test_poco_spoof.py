@@ -266,52 +266,43 @@ class TestRunnerPocoOptional:
 
 class TestLiteZipNaming:
     def test_lite_zip_name_format(self):
-        """Lite ZIP name must follow DeadZone_Lite_<codename>_<os_version>.zip (no _A suffix)."""
-        codename   = "garnet"
-        os_version = "OS3.0.304.0.WNRCNXM"
-        expected   = f"DeadZone_Lite_{codename}_{os_version}.zip"
-
-        # Verify the naming logic in package_rom.py
+        """All styles use DeadZone_<Style>_<codename>_<os_version>.zip (unified, no _A suffix)."""
         pkg_source = PACKAGE_PY.read_text(encoding="utf-8")
-        assert "DeadZone_Lite_" in pkg_source, (
-            "package_rom.py must produce DeadZone_Lite_ prefix for Lite style"
+        # Unified naming uses capitalize() — no style-specific branches needed
+        assert "style_prefix" in pkg_source, (
+            "package_rom.py must use style_prefix for unified ZIP naming"
         )
-        # Verify no _A suffix added for Lite
-        assert 'style_cfg["id"] == "lite"' in pkg_source or "== 'lite'" in pkg_source, (
-            "package_rom.py must branch on Lite style for naming"
+        assert "android_ver" not in pkg_source.split("zip_name")[1].split("\n")[0], (
+            "Unified ZIP name must not include android_ver"
         )
 
     def test_lite_zip_name_no_android_suffix(self):
-        """Lite ZIP name must NOT include _A<android_ver> suffix."""
+        """ZIP name for any style must NOT include _A<android_ver> suffix."""
         pkg_source = PACKAGE_PY.read_text(encoding="utf-8")
-        # Find the Lite branch — there should be a zip_name assignment without _A{android_ver}
+        # The unified naming line must not contain android_ver
         import re
-        lite_section = re.search(
-            r'if style_cfg\["id"\] == "lite":(.*?)else:', pkg_source, re.DOTALL
-        )
-        assert lite_section is not None, "Expected Lite branch in package_rom.py ZIP naming"
-        lite_code = lite_section.group(1)
-        assert "android_ver" not in lite_code, (
-            "Lite ZIP name branch must not include android_ver"
+        zip_line = re.search(r'zip_name\s*=\s*f"[^"]*"', pkg_source)
+        assert zip_line is not None, "Expected zip_name f-string in package_rom.py"
+        assert "android_ver" not in zip_line.group(0), (
+            "Unified ZIP name must not include android_ver"
         )
 
     def test_lite_zip_name_example(self):
-        """Verify naming produces the exact expected example name."""
+        """Unified naming produces the expected Lite example name."""
         codename   = "garnet"
         os_version = "OS3.0.304.0.WNRCNXM"
         zip_name   = f"DeadZone_Lite_{codename}_{os_version}.zip"
         assert zip_name == "DeadZone_Lite_garnet_OS3.0.304.0.WNRCNXM.zip"
 
     def test_standard_naming_still_has_android_suffix(self):
-        """Non-Lite styles (Stable, Legend) must still have _A<android_ver> suffix."""
+        """All styles use unified naming (no android suffix). zip_name uses style_prefix."""
         pkg_source = PACKAGE_PY.read_text(encoding="utf-8")
-        # The else branch should contain android_ver
+        # Unified scheme: no android_ver in zip_name at all
         import re
-        else_section = re.search(
-            r'else:\s*\n\s+zip_name\s*=.*?_A\{android_ver\}', pkg_source
-        )
-        assert else_section is not None, (
-            "Non-Lite ZIP naming (else branch) must include _A{android_ver}"
+        zip_line = re.search(r'zip_name\s*=\s*f"[^"]*"', pkg_source)
+        assert zip_line is not None, "Expected zip_name f-string in package_rom.py"
+        assert "android_ver" not in zip_line.group(0), (
+            "Unified ZIP naming must not include android_ver for any style"
         )
 
     def test_summary_json_has_final_style(self):

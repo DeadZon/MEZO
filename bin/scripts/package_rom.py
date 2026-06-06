@@ -309,16 +309,10 @@ SH_FLASH_BLOCK_END   = "# END MEZO GENERATED IMAGE FLASH COMMANDS"
 # ── DeadZone Style config ─────────────────────────────────────────────────────
 # Single source of truth for all styles. Add new styles here to extend the system.
 DZ_STYLES: dict[str, dict] = {
-    "stable": {
-        "id":   "stable",
-        "name": "DeadZone Stable",
-        "tier": "Free",
-    },
-    "legend": {
-        "id":   "legend",
-        "name": "DeadZone Legend",
-        "tier": "Paid",
-    },
+    "lite":   {"id": "lite",   "name": "DeadZone Lite",   "tier": "Free"},
+    "plus":   {"id": "plus",   "name": "DeadZone Plus",   "tier": "Free"},
+    "legend": {"id": "legend", "name": "DeadZone Legend", "tier": "Paid"},
+    "ninja":  {"id": "ninja",  "name": "DeadZone Ninja",  "tier": "Paid"},
 }
 
 FORBIDDEN_ENTRIES = [
@@ -660,16 +654,22 @@ def _normalize_style(style: str) -> str:
     """Normalize raw style input to canonical DZ_STYLES key.
 
     Accepted aliases:
-      stable, free  → stable
-      legend, paid  → legend
+      lite                       → lite
+      plus, stable, free         → plus   (stable is a compat alias for plus)
+      legend, paid               → legend
+      ninja                      → ninja
 
     Raises ValueError for anything else.
     """
     s = style.lower().strip()
-    if s in ("stable", "free"):
-        return "stable"
+    if s in ("lite",):
+        return "lite"
+    if s in ("plus", "stable", "free"):
+        return "plus"
     if s in ("legend", "paid"):
         return "legend"
+    if s in ("ninja",):
+        return "ninja"
     raise ValueError(f"Unsupported DeadZone style: {style}")
 
 
@@ -1768,19 +1768,24 @@ def _write_summary(
     nested_root: str | None = None,
     uncompressed_bytes: int = 0,
     zip_tool: str = "python-zipfile",
-    style_id: str = "stable",
-    naming_scheme: str = "standard",
+    style_id: str = "plus",
+    naming_scheme: str = "deadzone",
+    style_input_original: str = "",
 ) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     compressed_bytes = zip_path.stat().st_size
     ratio = uncompressed_bytes / compressed_bytes if compressed_bytes > 0 else 1.0
 
+    _style_cfg = DZ_STYLES.get(style_id, {})
     summary: dict = {
         "codename":                   cfg["codename"],
         "soc":                        cfg.get("soc_family", ""),
         "rom_os_version":             _read("base_rom_code.txt"),
         "android_version":            _read("androidver.txt"),
         "final_style":                style_id,
+        "final_tier":                 _style_cfg.get("tier", ""),
+        "style_input_original":       style_input_original or style_id,
+        "style_alias_used":           style_input_original.lower() != style_id if style_input_original else False,
         "final_zip_name":             zip_path.name,
         "naming_scheme":              naming_scheme,
         "final_zip_path":             str(zip_path),
@@ -2124,7 +2129,7 @@ def package() -> Path:
     baserom_type = _read("romtype.txt") or "payload"
 
     # ── Resolve DeadZone Style ────────────────────────────────────────────────
-    raw_style = os.environ.get("DZ_STYLE", "Stable")
+    raw_style = os.environ.get("DZ_STYLE", "Plus")
     try:
         style_id = _normalize_style(raw_style)
     except ValueError as exc:
@@ -2136,16 +2141,10 @@ def package() -> Path:
         f"({style_cfg['name']}, {style_cfg['tier']})"
     )
 
-    # ZIP naming depends on style:
-    #   Lite  → DeadZone_Lite_<codename>_<os_version>.zip       (no _A<android_ver>)
-    #   Other → DeadZone_<Style>_<codename>_<os_version>_A<android_ver>.zip
+    # Unified ZIP naming: DeadZone_<Style>_<codename>_<os_version>.zip
     style_prefix = style_cfg["id"].capitalize()
-    if style_cfg["id"] == "lite":
-        zip_name        = f"DeadZone_Lite_{_sanitize_name(codename)}_{rom_version}.zip"
-        _naming_scheme  = "lite"
-    else:
-        zip_name        = f"DeadZone_{style_prefix}_{_sanitize_name(codename)}_{rom_version}_A{android_ver}.zip"
-        _naming_scheme  = "standard"
+    zip_name       = f"DeadZone_{style_prefix}_{_sanitize_name(codename)}_{rom_version}.zip"
+    _naming_scheme = "deadzone"
     print(f"[PACKAGE] Building: {zip_name}")
 
     # ── Resolve device ────────────────────────────────────────────────────────
@@ -2440,6 +2439,7 @@ def package() -> Path:
         zip_tool=zip_tool,
         style_id=style_cfg["id"],
         naming_scheme=_naming_scheme,
+        style_input_original=raw_style,
     )
     _write_template_report(
         norm_soc=norm_soc,

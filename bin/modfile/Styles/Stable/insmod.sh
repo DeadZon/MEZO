@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# DeadZone Stable — inherits Lite, then applies Stable-specific mods.
+# DeadZone Stable — compat wrapper; delegates to Plus (the successor style).
 set -euo pipefail
 
 work_dir=${work_dir:-$(pwd)}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LITE_INSMOD="$SCRIPT_DIR/../Lite/insmod.sh"
+PLUS_INSMOD="$SCRIPT_DIR/../Plus/insmod.sh"
 
-echo "[STYLE] Stable: inheriting Lite base mods..."
+echo "[STYLE] Stable: compat alias — delegating to Plus..."
 
-if ! bash "$LITE_INSMOD"; then
-    echo "[STYLE][ERROR] Lite insmod failed — aborting Stable." >&2
+if ! bash "$PLUS_INSMOD"; then
+    echo "[STYLE][ERROR] Plus insmod failed — aborting Stable compat." >&2
     exit 1
 fi
 
-echo "[STYLE] Stable: no extra Stable-only patches yet."
-echo "[STYLE] Stable mods complete."
+echo "[STYLE] Stable (via Plus) mods complete."

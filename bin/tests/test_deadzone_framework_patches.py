@@ -234,10 +234,10 @@ def test_report_txt_written(tmp_path, monkeypatch):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_stable_insmod_calls_patch_module():
-    """Stable insmod.sh must invoke framework patches — directly or via Lite inheritance.
+    """Stable insmod.sh must invoke framework patches — directly, via Lite, or via Plus.
 
-    Stable now delegates to Lite/insmod.sh which calls style_mod_runner.py which runs
-    deadzone_framework_patches.py. Either path is acceptable.
+    Stable is now a compat alias that delegates to Plus/insmod.sh, which inherits Lite,
+    which calls style_mod_runner.py → deadzone_framework_patches.py. Any path is OK.
     """
     insmod = (
         Path(__file__).resolve().parent.parent
@@ -246,12 +246,13 @@ def test_stable_insmod_calls_patch_module():
     assert insmod.exists(), f"insmod.sh not found at {insmod}"
     content = insmod.read_text(encoding="utf-8")
 
-    # Accept either: direct patch invocation (old) or Lite inheritance (new)
+    # Accept direct invocation, Lite inheritance, or Plus delegation (compat wrapper)
     calls_patches_directly = "deadzone_framework_patches.py" in content
     calls_lite             = "Lite" in content or "style_mod_runner" in content
-    assert calls_patches_directly or calls_lite, (
-        "Stable insmod.sh must either call deadzone_framework_patches.py directly "
-        "or inherit from Lite (which runs the patches via style_mod_runner.py)"
+    calls_plus             = "Plus" in content
+    assert calls_patches_directly or calls_lite or calls_plus, (
+        "Stable insmod.sh must either call deadzone_framework_patches.py directly, "
+        "inherit from Lite, or delegate to Plus (compat wrapper)"
     )
 
 

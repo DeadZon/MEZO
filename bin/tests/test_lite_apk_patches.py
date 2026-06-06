@@ -866,26 +866,28 @@ class TestIntegration:
         # fw_follower must be skipped (group deduplication)
         assert statuses.get("fw_follower") == "skipped"
 
-    def test_stable_inherits_lite(self):
-        """Test 29: Stable insmod.sh references Lite."""
+    def test_stable_delegates_to_plus(self):
+        """Test 29: Stable insmod.sh is a compat wrapper delegating to Plus."""
         if not STABLE_INSMOD.is_file():
             pytest.skip("Stable insmod.sh not present")
         content = STABLE_INSMOD.read_text(encoding="utf-8")
-        assert "Lite" in content
+        assert "Plus" in content, "Stable must delegate to Plus (compat wrapper)"
 
-    def test_legend_inherits_stable(self):
-        """Test 30: Legend insmod.sh references Stable."""
+    def test_legend_inherits_plus(self):
+        """Test 30: Legend insmod.sh references Plus (not Stable)."""
         if not LEGEND_INSMOD.is_file():
             pytest.skip("Legend insmod.sh not present")
         content = LEGEND_INSMOD.read_text(encoding="utf-8")
-        assert "Stable" in content
+        assert "Plus" in content, "Legend must inherit Plus"
+        assert "Stable" not in content, "Legend must not reference old Stable"
 
-    def test_ninja_inherits_stable(self):
-        """Test 30b: Ninja insmod.sh references Stable."""
+    def test_ninja_inherits_plus(self):
+        """Test 30b: Ninja insmod.sh references Plus (not Stable)."""
         if not NINJA_INSMOD.is_file():
             pytest.skip("Ninja insmod.sh not present")
         content = NINJA_INSMOD.read_text(encoding="utf-8")
-        assert "Stable" in content
+        assert "Plus" in content, "Ninja must inherit Plus"
+        assert "Stable" not in content, "Ninja must not reference old Stable"
 
     def test_all_mods_have_executor(self):
         """Test 32: All mods in updated mods.json have a python_entry or script_path."""

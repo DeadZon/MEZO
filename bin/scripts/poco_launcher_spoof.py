@@ -26,6 +26,9 @@ _REPLACE_WITH = "Redmi"
 # Prop files live under these top-level partition dirs relative to work_dir
 _SCAN_DIRS = ("vendor", "odm")
 
+# Additional base paths searched when direct partitions are absent
+_EXTRA_BASES = ("build/baserom/images",)
+
 
 # ── prop helpers ───────────────────────────────────────────────────────────────
 
@@ -89,13 +92,27 @@ def _replace_brand_in_file(prop_path: Path) -> dict:
 
 # ── main spoof logic ───────────────────────────────────────────────────────────
 
+def _candidate_partition_dirs(work_dir: Path) -> list[tuple[str, Path]]:
+    """Return (partition_name, path) pairs covering direct and extra-base locations."""
+    seen: set[Path] = set()
+    candidates: list[tuple[str, Path]] = []
+    for base_rel in ("",) + _EXTRA_BASES:
+        base = work_dir / base_rel if base_rel else work_dir
+        for part in _SCAN_DIRS:
+            p = base / part
+            resolved = p.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                candidates.append((part, p))
+    return candidates
+
+
 def run_poco_spoof(work_dir: Path) -> dict:
-    """Scan vendor/ and odm/ for POCO brand.  Return result dict."""
+    """Scan vendor/ and odm/ (and build/baserom/images equivalents) for POCO brand."""
     results: list[dict] = []
     poco_detected = False
 
-    for partition in _SCAN_DIRS:
-        part_dir = work_dir / partition
+    for partition, part_dir in _candidate_partition_dirs(work_dir):
         if not part_dir.is_dir():
             results.append({
                 "target_file": str(part_dir),

@@ -1291,8 +1291,10 @@ def write_error_report(stage: str, exc_str: str) -> None:
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="DeadZone Kaorios Toolbox Integration")
-    ap.add_argument("--style", default=os.environ.get("DZ_STYLE_ID", "stable"),
-                    help="DeadZone style (lite/stable/legend/ninja)")
+    ap.add_argument("--style", default=os.environ.get("DZ_STYLE_ID", "plus"),
+                    help="DeadZone style (lite/plus/legend/ninja)")
+    ap.add_argument("--work-dir", default=None,
+                    help="Project root (work directory). Defaults to repo root.")
     args = ap.parse_args()
 
     _log("===== DeadZone Kaorios Toolbox Integration =====")
