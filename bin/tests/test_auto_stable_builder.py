@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Ensure scripts/ is importable
+# Ensure bin/scripts/ is importable (bin/tests/../ = bin/, then /scripts = bin/scripts/)
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 

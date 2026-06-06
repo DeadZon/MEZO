@@ -23,8 +23,8 @@ import zipfile
 from pathlib import Path
 
 WORK_DIR    = Path.cwd()
-REPORTS_DIR = WORK_DIR / "output" / "reports"
-LOGS_DIR    = WORK_DIR / "output" / "logs"
+REPORTS_DIR = WORK_DIR / "bin" / "output" / "reports"
+LOGS_DIR    = WORK_DIR / "bin" / "output" / "logs"
 BUILD_IMAGES = WORK_DIR / "build" / "baserom" / "images"
 STAGING_BASE = WORK_DIR / "out" / "dz_staging"
 

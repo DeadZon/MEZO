@@ -15,14 +15,16 @@ from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
-REPO_ROOT    = Path(__file__).resolve().parent.parent
-DEVICES_MTK  = REPO_ROOT / "bin" / "devices" / "mtk"
-DEVICES_SD   = REPO_ROOT / "bin" / "devices" / "snapdragon"
-DDEVICE_DATA = REPO_ROOT / "bin" / "ddevice" / "data" / "devices.json"
-QUEUE_FILE   = REPO_ROOT / "output" / "queue" / "auto_build_queue.json"
-STATE_FILE   = REPO_ROOT / "output" / "state" / "built_releases.json"
-REPORTS_DIR  = REPO_ROOT / "output" / "reports"
-LOGS_DIR     = REPO_ROOT / "output" / "logs"
+REPO_ROOT    = Path(__file__).resolve().parent.parent.parent   # bin/scripts → bin → repo root
+BIN_DIR      = REPO_ROOT / "bin"
+DEVICES_MTK  = BIN_DIR / "devices" / "mtk"
+DEVICES_SD   = BIN_DIR / "devices" / "snapdragon"
+DDEVICE_DATA = BIN_DIR / "ddevice" / "data" / "devices.json"
+OUTPUT_DIR   = BIN_DIR / "output"
+QUEUE_FILE   = OUTPUT_DIR / "queue" / "auto_build_queue.json"
+STATE_FILE   = OUTPUT_DIR / "state" / "built_releases.json"
+REPORTS_DIR  = OUTPUT_DIR / "reports"
+LOGS_DIR     = OUTPUT_DIR / "logs"
 
 PUBLISH_PAYLOAD = REPORTS_DIR / "publish_payload.json"
 PD_REPORT       = REPORTS_DIR / "pixeldrain_upload_report.json"

@@ -12,8 +12,10 @@ on:
         default: 'Stable'
         type: choice
         options:
+          - Lite
           - Stable
           - Legend
+          - Ninja
       notify_telegram:
         description: 'Live Telegram notifications'
         type: boolean
@@ -75,8 +77,10 @@ jobs:
         run: |
           RAW_STYLE="${{ inputs.style }}"
           case "${RAW_STYLE,,}" in
+            lite)         STYLE_ID=lite   ; STYLE_NAME="DeadZone Lite"   ; STYLE_TIER=Free  ;;
             stable|free)  STYLE_ID=stable ; STYLE_NAME="DeadZone Stable" ; STYLE_TIER=Free  ;;
             legend|paid)  STYLE_ID=legend ; STYLE_NAME="DeadZone Legend" ; STYLE_TIER=Paid  ;;
+            ninja)        STYLE_ID=ninja  ; STYLE_NAME="DeadZone Ninja"  ; STYLE_TIER=Free  ;;
             *)
               echo "::error::Unsupported DeadZone style: ${RAW_STYLE}"
               exit 1
@@ -185,7 +189,7 @@ jobs:
             sudo kill "$TG_PID" 2>/dev/null || true
           fi
 
-          echo "[PACKAGE] ZIP path: $(cat output/reports/final_zip_path.txt)"
+          echo "[PACKAGE] ZIP path: $(cat bin/output/reports/final_zip_path.txt)"
           set -eo pipefail
           exit $STEP_EXIT
 
@@ -202,9 +206,9 @@ jobs:
         id: pixeldrain_upload
         if: ${{ inputs.upload_pixeldrain && success() }}
         run: |
-          ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
+          ZIP_PATH=$(cat bin/output/reports/final_zip_path.txt 2>/dev/null || echo "")
           if [ -z "$ZIP_PATH" ]; then
-            echo "::error::Cannot find final ZIP path in output/reports/final_zip_path.txt"
+            echo "::error::Cannot find final ZIP path in bin/output/reports/final_zip_path.txt"
             exit 1
           fi
           echo "[PIXELDRAIN] Uploading: $ZIP_PATH"
@@ -219,14 +223,14 @@ jobs:
         if: ${{ inputs.notify_telegram && success() }}
         run: |
           PIXELDRAIN_URL=""
-          REPORT="output/reports/pixeldrain_upload_report.json"
+          REPORT="bin/output/reports/pixeldrain_upload_report.json"
           if [ -f "$REPORT" ]; then
             PIXELDRAIN_URL=$(python3 -c "import json; d=json.load(open('$REPORT')); print(d.get('url',''))" 2>/dev/null || echo "")
           fi
 
           ZIP_NAME=""
           ZIP_SIZE="0"
-          ZIP_PATH=$(cat output/reports/final_zip_path.txt 2>/dev/null || echo "")
+          ZIP_PATH=$(cat bin/output/reports/final_zip_path.txt 2>/dev/null || echo "")
           if [ -f "$ZIP_PATH" ]; then
             ZIP_NAME=$(basename "$ZIP_PATH")
             ZIP_SIZE=$(python3 -c "import os; print(f'{os.path.getsize(\"$ZIP_PATH\")/1024/1024:.1f}')" 2>/dev/null || echo "0")
@@ -241,7 +245,7 @@ jobs:
       - name: Create failure debug ZIP
         if: failure()
         run: |
-          mkdir -p output/reports output/logs
+          mkdir -p bin/output/reports bin/output/logs
           sudo -E python3 bin/scripts/debug_zip.py || true
 
       - name: Telegram - Failed
@@ -253,8 +257,8 @@ jobs:
           fi
 
           ERROR_TEXT=""
-          if [ -f output/reports/package_error_report.txt ]; then
-            ERROR_TEXT=$(grep -m1 "^Reason:" output/reports/package_error_report.txt | sed 's/^Reason:[[:space:]]*//' | head -c 200 || true)
+          if [ -f bin/output/reports/package_error_report.txt ]; then
+            ERROR_TEXT=$(grep -m1 "^Reason:" bin/output/reports/package_error_report.txt | sed 's/^Reason:[[:space:]]*//' | head -c 200 || true)
           fi
           if [ -z "$ERROR_TEXT" ] && [ -f /tmp/mezo_package.log ]; then
             ERROR_TEXT=$(grep -i "error\|failed\|invalid" /tmp/mezo_package.log | tail -n3 | tr '\n' ' ' | head -c 200 || true)
@@ -267,7 +271,7 @@ jobs:
           fi
 
           DEBUG_ZIP_NAME=""
-          if [ -f output/reports/build_failure_debug.zip ]; then
+          if [ -f bin/output/reports/build_failure_debug.zip ]; then
             DEBUG_ZIP_NAME="build_failure_debug.zip (artifact: deadzone-failure-debug)"
           fi
 
@@ -282,7 +286,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deadzone-failure-debug
-          path: output/reports/build_failure_debug.zip
+          path: bin/output/reports/build_failure_debug.zip
           if-no-files-found: warn
           retention-days: 7
 

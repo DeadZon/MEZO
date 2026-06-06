@@ -56,7 +56,7 @@ BUILD_FW              = WORK_DIR / "build" / "baserom" / "firmware-update"
 TEMPLATE_RAR          = WORK_DIR / "DeadZone_Mezo.rar"
 FINAL_ZIP_TEMPLATES_DIR = WORK_DIR / "bin" / "final_zip_templates"
 STAGING_BASE          = WORK_DIR / "out" / "dz_staging"
-REPORTS_DIR           = WORK_DIR / "output" / "reports"
+REPORTS_DIR           = WORK_DIR / "bin" / "output" / "reports"
 OUT_DIR               = WORK_DIR / "out"
 
 # img files that belong in images/ (super.img handled separately)
@@ -437,8 +437,8 @@ def _create_debug_zip() -> "Path | None":
     try:
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
 
-            # output/logs/**
-            logs_dir = WORK_DIR / "output" / "logs"
+            # bin/output/logs/**
+            logs_dir = WORK_DIR / "bin" / "output" / "logs"
             if logs_dir.is_dir():
                 for f in sorted(logs_dir.rglob("*")):
                     if f.is_file() and f.suffix != ".img" and f.stat().st_size < 20 * 1024 * 1024:
@@ -454,19 +454,19 @@ def _create_debug_zip() -> "Path | None":
 
             # Named report files (belt-and-suspenders)
             for rel in [
-                "output/logs/package_commands.log",
-                "output/reports/package_error_report.txt",
-                "output/reports/image_type_report.txt",
-                "output/reports/framework_patcher_report.txt",
-                "output/reports/signature_verification_bypass_report.txt",
-                "output/reports/invoke_custom_report.txt",
-                "output/reports/framework_patcher_error.txt",
-                "output/reports/final_zip_template_report.txt",
-                "output/reports/snapdragon_flash_script_report.txt",
-                "output/reports/deadzone_style_report.txt",
-                "output/reports/device_resolve_report.txt",
-                "output/reports/final_zip_manifest.txt",
-                "output/reports/final_zip_summary.json",
+                "bin/output/logs/package_commands.log",
+                "bin/output/reports/package_error_report.txt",
+                "bin/output/reports/image_type_report.txt",
+                "bin/output/reports/framework_patcher_report.txt",
+                "bin/output/reports/signature_verification_bypass_report.txt",
+                "bin/output/reports/invoke_custom_report.txt",
+                "bin/output/reports/framework_patcher_error.txt",
+                "bin/output/reports/final_zip_template_report.txt",
+                "bin/output/reports/snapdragon_flash_script_report.txt",
+                "bin/output/reports/deadzone_style_report.txt",
+                "bin/output/reports/device_resolve_report.txt",
+                "bin/output/reports/final_zip_manifest.txt",
+                "bin/output/reports/final_zip_summary.json",
             ]:
                 _add(zf, WORK_DIR / rel, Path(rel).name)
 

@@ -31,8 +31,8 @@ from pathlib import Path
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-STATE_FILE        = Path("output/reports/telegram_status.json")
-REPORT_FILE       = Path("output/reports/telegram_live_report.txt")
+STATE_FILE        = Path("bin/output/reports/telegram_status.json")
+REPORT_FILE       = Path("bin/output/reports/telegram_live_report.txt")
 MAX_TEXT          = 4000
 MIN_EDIT_INTERVAL = 5.0   # minimum seconds between edits (rate-limit buffer)
 LOG_BUFFER_MAX    = 5     # how many log lines to keep visible in message

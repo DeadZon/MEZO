@@ -113,10 +113,10 @@ jobs:
 
       - name: Create output directories
         run: |
-          mkdir -p output/queue output/state output/reports output/logs
+          mkdir -p bin/output/queue bin/output/state bin/output/reports bin/output/logs
           # Initialise queue/state files if absent
-          [ -f output/queue/auto_build_queue.json ] || echo '[]' > output/queue/auto_build_queue.json
-          [ -f output/state/built_releases.json ]  || echo '{"built":[],"records":[]}' > output/state/built_releases.json
+          [ -f bin/output/queue/auto_build_queue.json ] || echo '[]' > bin/output/queue/auto_build_queue.json
+          [ -f bin/output/state/built_releases.json ]  || echo '{"built":[],"records":[]}' > bin/output/state/built_releases.json
 
       # ── Restore persisted queue / state from cache ─────────────────────────
       # v2-cn-global-only prefix ensures old pre-suffix-fix caches are never restored
@@ -125,17 +125,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            output/queue/auto_build_queue.json
-            output/state/built_releases.json
-          key: deadzone-auto-queue-v2-cn-global-only-${{ github.run_id }}
+            bin/output/queue/auto_build_queue.json
+            bin/output/state/built_releases.json
+          key: deadzone-auto-queue-v3-bin-output-${{ github.run_id }}
           restore-keys: |
-            deadzone-auto-queue-v2-cn-global-only-
+            deadzone-auto-queue-v3-bin-output-
 
       # ── Reset queue when explicitly requested ──────────────────────────────
       - name: Reset queue (reset_queue=true)
         if: ${{ inputs.reset_queue == true }}
         run: |
-          echo '[]' > output/queue/auto_build_queue.json
+          echo '[]' > bin/output/queue/auto_build_queue.json
           echo "[QUEUE_RESET] Queue cleared — reset_queue=true"
 
       # ══════════════════════════════════════════════════════════════════════
@@ -146,13 +146,13 @@ jobs:
         run: |
           PAGES="${{ inputs.scan_pages }}"
           [ -z "$PAGES" ] && PAGES=5
-          python3 scripts/scan_tech_mukul.py --scan-pages "$PAGES"
+          python3 bin/scripts/scan_tech_mukul.py --scan-pages "$PAGES"
 
       # ══════════════════════════════════════════════════════════════════════
       #  PRUNE  — always run, removes stale/invalid items from the queue
       # ══════════════════════════════════════════════════════════════════════
       - name: Prune stale queue items
-        run: python3 scripts/prune_queue.py
+        run: python3 bin/scripts/prune_queue.py
 
       # ══════════════════════════════════════════════════════════════════════
       #  BUILD + UPLOAD + PUBLISH  (sequential multi-build loop)
@@ -169,7 +169,7 @@ jobs:
           if [ "${{ inputs.stop_on_first_failure }}" = "true" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --stop-on-first-failure"
           fi
-          python3 scripts/build_next_stable.py \
+          python3 bin/scripts/build_next_stable.py \
             --max-builds "${{ steps.mode.outputs.max_builds }}" \
             $EXTRA_ARGS
 
@@ -182,10 +182,10 @@ jobs:
         with:
           name: deadzone-auto-stable-reports-${{ github.run_number }}
           path: |
-            output/reports/**
-            output/logs/**
-            output/queue/**
-            output/state/**
+            bin/output/reports/**
+            bin/output/logs/**
+            bin/output/queue/**
+            bin/output/state/**
           if-no-files-found: warn
           retention-days: 30
 

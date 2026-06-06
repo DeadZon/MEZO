@@ -145,10 +145,12 @@ bash $work_dir/bin/modfile/UpdateFile/insupdate.sh
 # ── Style-specific mods ───────────────────────────────────────────────────────
 _DZ_STYLE_ID="${DZ_STYLE_ID:-stable}"
 case "${_DZ_STYLE_ID,,}" in
+    lite)   _DZ_STYLE_DIR="Lite"   ;;
     stable) _DZ_STYLE_DIR="Stable" ;;
     legend) _DZ_STYLE_DIR="Legend" ;;
+    ninja)  _DZ_STYLE_DIR="Ninja"  ;;
     *)
-        echo "[STYLE] ERROR: Unsupported DeadZone style: ${_DZ_STYLE_ID}"
+        echo "[STYLE] ERROR: Unsupported DeadZone style: ${_DZ_STYLE_ID}. Valid: lite, stable, legend, ninja"
         exit 1
         ;;
 esac

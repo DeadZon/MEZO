@@ -31,7 +31,7 @@ PIXELDRAIN_API_URL  = "https://pixeldrain.com/api/file"
 PIXELDRAIN_PUBLIC_URL = "https://pixeldrain.com/u"
 UPLOAD_ATTEMPTS     = 3
 UPLOAD_RETRY_DELAY  = 25
-REPORT_FILE         = Path("output/reports/pixeldrain_upload_report.json")
+REPORT_FILE         = Path("bin/output/reports/pixeldrain_upload_report.json")
 
 
 def _api_key() -> str:
