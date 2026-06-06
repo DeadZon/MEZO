@@ -37,6 +37,28 @@
       "description": "Fixes A15 bootloop caused by specific smali files across framework_unpacked, services_unpacked, and miui_services_unpacked"
     },
     {
+      "id": "miui_services_cn_global_patches",
+      "name": "miui-services CN/Global Build flag patches",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "lite"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": false,
+      "description": "Patches CN/Global Build flags in miui-services smali: replaces IS_INTERNATIONAL_BUILD/IS_GLOBAL_BUILD with IS_MIUI, injects const/4 forcing values, and adds const/4 v0,0x0 above PolicyManager CN_MODEL sput"
+    },
+    {
+      "id": "lite_apk_patches",
+      "name": "Lite APK/App Patches",
+      "source_stage": "apk_patches",
+      "python_entry": "bin/scripts/lite_apk_patches.py",
+      "args": ["--style", "lite"],
+      "group": "lite_apk_patches",
+      "enabled": true,
+      "required": false,
+      "description": "Applies APK-level patches: PowerKeeper CN/global Build flags + MilletConfig const/4 + isGmsControlEnabled→false; Provision MEZO branding strings; MiuiSystemUI Hide 4G/Show VoLTE for OS2/3 CN ROMs"
+    },
+    {
       "id": "kousei_kaorios_toolbox",
       "name": "Kousei / Kaorios Toolbox",
       "source_stage": "UpdateFile/DeadZone_KaoriosToolbox",

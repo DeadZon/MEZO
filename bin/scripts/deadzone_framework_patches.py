@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 DeadZone MEZO Framework Patches
-Ports three targeted smali patches from HyperURBuild:
+Ports four targeted smali patches from HyperURBuild:
   1. Signature Verification Bypass  (A14/A15 safe; A16 variant dirs included)
   2. invoke-custom Handling         (broad smali scan)
   3. Fix Bootloop A15               (specific known-bad file map)
+  4. miui-services CN/Global Build flag patches (IS_INTERNATIONAL/GLOBAL → IS_MIUI)
 
 All patches are Stable/Free by default — no Legend gate.
 Reports written to output/reports/deadzone_patch_report.{txt,json}.
@@ -928,7 +929,291 @@ def apply_fix_bootloop_a15(work_dir: Path, report: list) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Stable entry point — runs all 3 patches and writes reports
+# PATCH 4 — miui-services CN/Global Build flag patches
+# ══════════════════════════════════════════════════════════════════════════════
+
+_PATCH_MSVC = "miui_services_cn_global_patches"
+
+_INTL_FLAG   = "Lmiui/os/Build;->IS_INTERNATIONAL_BUILD:Z"
+_GLOBAL_FLAG = "Lmiui/os/Build;->IS_GLOBAL_BUILD:Z"
+_MIUI_FLAG   = "Lmiui/os/Build;->IS_MIUI:Z"
+_POLICY_MGR_SPUT = "sput-boolean v0, Lcom/miui/server/greeze/PolicyManager;->CN_MODEL:Z"
+
+# Patch A: replace IS_INTERNATIONAL_BUILD → IS_MIUI in these classes
+_MSVC_PATCH_A_CLASSES = frozenset([
+    "ActivityManagerServiceImpl",
+    "BroadcastQueueModernStubImpl",
+    "ProcessManagerService",
+    "ProcessPolicy",
+    "ProcessSceneCleaner",
+])
+
+# Patch B: replace IS_GLOBAL_BUILD → IS_MIUI in this class only
+_MSVC_PATCH_B_CLASS = "MiuiShortcutTriggerHelper$ShortcutSettingsObserver"
+
+# Patch C: insert const/4 vX, 0x1 below sget-boolean IS_MIUI in these classes
+_MSVC_PATCH_C_CLASSES = frozenset([
+    "BroadcastQueueModernStubImpl",
+    "ProcessManagerService",
+    "ProcessSceneCleaner",
+])
+
+
+def _extract_sget_register(line: str) -> Optional[str]:
+    """Return the register name from a sget-boolean line, or None."""
+    m = re.match(r'\s*sget-boolean\s+(v\d+|p\d+)\s*,', line)
+    return m.group(1) if m else None
+
+
+def _replace_flag(content: str, old_flag: str, new_flag: str) -> tuple[str, int]:
+    """Replace old_flag with new_flag everywhere. Returns (new_content, count)."""
+    count = content.count(old_flag)
+    return (content.replace(old_flag, new_flag), count) if count else (content, 0)
+
+
+def _insert_const_below_sget(content: str, flag: str, const_value: str = "0x1") -> tuple[str, int]:
+    """
+    Below each sget-boolean line that references flag, insert const/4 vX, const_value.
+    Idempotent: skips if the next non-empty line is already const/4 same_register, const_value.
+    Returns (new_content, insertions_count).
+    """
+    lines = content.splitlines(True)
+    out: list[str] = []
+    insertions = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped.startswith("sget-boolean") and flag in stripped:
+            reg = _extract_sget_register(stripped)
+            if reg:
+                # Peek at next non-empty line for idempotency
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                next_stripped = lines[j].strip() if j < len(lines) else ""
+                if next_stripped != f"const/4 {reg}, {const_value}":
+                    out.append(line)
+                    indent = len(line) - len(line.lstrip())
+                    out.append(" " * indent + f"const/4 {reg}, {const_value}\n")
+                    insertions += 1
+                    i += 1
+                    continue
+        out.append(line)
+        i += 1
+    return "".join(out), insertions
+
+
+def _insert_const_above_sput(content: str, sput_pattern: str) -> tuple[str, int]:
+    """
+    Insert const/4 v0, 0x0 immediately above the first line matching sput_pattern.
+    Idempotent: skips if the preceding non-empty line is already const/4 v0, 0x0.
+    Returns (new_content, insertions_count).
+    """
+    lines = content.splitlines(True)
+    out: list[str] = []
+    insertions = 0
+    for line in lines:
+        if line.strip() == sput_pattern.strip() and insertions == 0:
+            prev = ""
+            for prev_line in reversed(out):
+                s = prev_line.strip()
+                if s:
+                    prev = s
+                    break
+            if prev != "const/4 v0, 0x0":
+                indent = len(line) - len(line.lstrip())
+                out.append(" " * indent + "const/4 v0, 0x0\n")
+                insertions += 1
+        out.append(line)
+    return "".join(out), insertions
+
+
+def _find_smali_class_in_dirs(smali_dirs: list[Path], class_name: str) -> Optional[Path]:
+    """Search smali_dirs recursively for class_name.smali."""
+    for sd in smali_dirs:
+        for p in sd.rglob(f"{class_name}.smali"):
+            return p
+    return None
+
+
+def _msvc_entry(
+    class_name: str,
+    path: str,
+    *,
+    found: bool,
+    status: str,
+    replacements: int = 0,
+    const_insertions: int = 0,
+    detail: str = "",
+    error: Optional[str] = None,
+) -> dict:
+    return {
+        "patch_name": _PATCH_MSVC,
+        "target_class": class_name,
+        "target_file": path,
+        "found": found,
+        "status": status,
+        "replacements_count": replacements,
+        "const_insertions_count": const_insertions,
+        "files_modified": [path] if status == "changed" else [],
+        "detail": detail,
+        "error": error,
+    }
+
+
+def apply_miui_services_cn_global_patches(work_dir: Path, report: list) -> None:
+    """
+    Patch 4: CN/Global Build flag patches for miui-services.jar smali.
+
+    Patch A — Replace IS_INTERNATIONAL_BUILD → IS_MIUI in 5 target classes.
+    Patch B — Replace IS_GLOBAL_BUILD → IS_MIUI in ShortcutSettingsObserver.
+    Patch C — Insert const/4 vX, 0x1 below IS_MIUI sget-boolean in 3 classes.
+    Patch D — Insert const/4 v0, 0x0 above PolicyManager->CN_MODEL sput-boolean.
+    """
+    mi = work_dir / "miui_services_unpacked"
+
+    if not mi.exists():
+        report.append(_msvc_entry(
+            "miui_services_unpacked", str(mi),
+            found=False, status="skipped",
+            detail="miui_services_unpacked missing — SKIPPED",
+        ))
+        return
+
+    smali_dirs = sorted(
+        [d for d in mi.iterdir() if d.is_dir() and d.name.startswith("smali")],
+        key=lambda d: d.name,
+    )
+    if not smali_dirs:
+        report.append(_msvc_entry(
+            "miui_services_unpacked", str(mi),
+            found=True, status="skipped",
+            detail="No smali_classes dirs in miui_services_unpacked",
+        ))
+        return
+
+    # ── Patch A: IS_INTERNATIONAL_BUILD → IS_MIUI ──────────────────────────────
+    for cls in sorted(_MSVC_PATCH_A_CLASSES):
+        path = _find_smali_class_in_dirs(smali_dirs, cls)
+        if not path:
+            report.append(_msvc_entry(
+                cls, f"{mi}/**/{cls}.smali",
+                found=False, status="skipped",
+                detail=f"{cls}: class not found — SKIPPED",
+            ))
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+            new_content, count = _replace_flag(content, _INTL_FLAG, _MIUI_FLAG)
+            if count:
+                path.write_text(new_content, encoding="utf-8")
+                report.append(_msvc_entry(
+                    cls, str(path), found=True, status="changed",
+                    replacements=count,
+                    detail=f"{cls}: {count} IS_INTERNATIONAL_BUILD → IS_MIUI",
+                ))
+            else:
+                report.append(_msvc_entry(
+                    cls, str(path), found=True, status="skipped",
+                    detail=f"{cls}: IS_INTERNATIONAL_BUILD not found",
+                ))
+        except Exception as exc:
+            report.append(_msvc_entry(cls, str(path), found=True, status="failed", error=str(exc)))
+
+    # ── Patch B: IS_GLOBAL_BUILD → IS_MIUI in ShortcutSettingsObserver ─────────
+    obs_path = _find_smali_class_in_dirs(smali_dirs, _MSVC_PATCH_B_CLASS)
+    if not obs_path:
+        report.append(_msvc_entry(
+            _MSVC_PATCH_B_CLASS, f"{mi}/**/{_MSVC_PATCH_B_CLASS}.smali",
+            found=False, status="skipped",
+            detail=f"{_MSVC_PATCH_B_CLASS}: class not found — SKIPPED",
+        ))
+    else:
+        try:
+            content = obs_path.read_text(encoding="utf-8", errors="ignore")
+            new_content, count = _replace_flag(content, _GLOBAL_FLAG, _MIUI_FLAG)
+            if count:
+                obs_path.write_text(new_content, encoding="utf-8")
+                report.append(_msvc_entry(
+                    _MSVC_PATCH_B_CLASS, str(obs_path), found=True, status="changed",
+                    replacements=count,
+                    detail=f"{_MSVC_PATCH_B_CLASS}: {count} IS_GLOBAL_BUILD → IS_MIUI",
+                ))
+            else:
+                report.append(_msvc_entry(
+                    _MSVC_PATCH_B_CLASS, str(obs_path), found=True, status="skipped",
+                    detail=f"{_MSVC_PATCH_B_CLASS}: IS_GLOBAL_BUILD not found",
+                ))
+        except Exception as exc:
+            report.append(_msvc_entry(_MSVC_PATCH_B_CLASS, str(obs_path), found=True,
+                                      status="failed", error=str(exc)))
+
+    # ── Patch C: const/4 vX, 0x1 below IS_MIUI sget-boolean in 3 classes ───────
+    for cls in sorted(_MSVC_PATCH_C_CLASSES):
+        path = _find_smali_class_in_dirs(smali_dirs, cls)
+        if not path:
+            # Already reported as missing in Patch A loop (classes overlap)
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+            new_content, insertions = _insert_const_below_sget(content, _MIUI_FLAG)
+            if insertions:
+                path.write_text(new_content, encoding="utf-8")
+                report.append(_msvc_entry(
+                    cls, str(path), found=True, status="changed",
+                    const_insertions=insertions,
+                    detail=f"{cls} (Patch C): {insertions} const/4 inserted below IS_MIUI",
+                ))
+            else:
+                report.append(_msvc_entry(
+                    cls, str(path), found=True, status="skipped",
+                    detail=f"{cls} (Patch C): no IS_MIUI sget-boolean found or already patched",
+                ))
+        except Exception as exc:
+            report.append(_msvc_entry(cls, str(path), found=True, status="failed", error=str(exc)))
+
+    # ── Patch D: const/4 v0, 0x0 above PolicyManager->CN_MODEL sput-boolean ─────
+    cn_model_found = False
+    for sd in smali_dirs:
+        for smali_file in sd.rglob("*.smali"):
+            try:
+                content = smali_file.read_text(encoding="utf-8", errors="ignore")
+                if _POLICY_MGR_SPUT not in content:
+                    continue
+                cn_model_found = True
+                new_content, insertions = _insert_const_above_sput(content, _POLICY_MGR_SPUT)
+                if insertions:
+                    smali_file.write_text(new_content, encoding="utf-8")
+                    report.append(_msvc_entry(
+                        "PolicyManager", str(smali_file), found=True, status="changed",
+                        const_insertions=insertions,
+                        detail="PolicyManager CN_MODEL: const/4 v0, 0x0 inserted above sput",
+                    ))
+                else:
+                    report.append(_msvc_entry(
+                        "PolicyManager", str(smali_file), found=True, status="skipped",
+                        detail="PolicyManager CN_MODEL: already has const/4 v0, 0x0 above sput",
+                    ))
+                break
+            except Exception as exc:
+                report.append(_msvc_entry("PolicyManager", str(smali_file), found=True,
+                                          status="failed", error=str(exc)))
+                cn_model_found = True
+                break
+        if cn_model_found:
+            break
+
+    if not cn_model_found:
+        report.append(_msvc_entry(
+            "PolicyManager", str(mi),
+            found=False, status="skipped",
+            detail="PolicyManager CN_MODEL sput-boolean not found — SKIPPED",
+        ))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Stable entry point — runs all 4 patches and writes reports
 # ══════════════════════════════════════════════════════════════════════════════
 
 def apply_stable_framework_patches(work_dir: Path) -> dict:
@@ -938,30 +1223,26 @@ def apply_stable_framework_patches(work_dir: Path) -> dict:
     Returns the full report dict.
     """
     work_dir = Path(work_dir).resolve()
-    all_entries: list[dict] = []
 
-    # --- Run patches ---
-    sig_entries: list[dict] = []
-    ic_entries: list[dict] = []
-    bl_entries: list[dict] = []
+    sig_entries:  list[dict] = []
+    ic_entries:   list[dict] = []
+    bl_entries:   list[dict] = []
+    msvc_entries: list[dict] = []
 
     apply_signature_verification_bypass(work_dir, sig_entries)
     apply_invoke_custom_handling(work_dir, ic_entries)
     apply_fix_bootloop_a15(work_dir, bl_entries)
+    apply_miui_services_cn_global_patches(work_dir, msvc_entries)
 
-    all_entries = sig_entries + ic_entries + bl_entries
+    all_entries = sig_entries + ic_entries + bl_entries + msvc_entries
 
     def _summary(entries: list[dict]) -> dict:
-        scanned = len(entries)
-        modified = sum(1 for e in entries if e["status"] == "changed")
-        failed = sum(1 for e in entries if e["status"] == "failed")
-        skipped = sum(1 for e in entries if e["status"] == "skipped")
         return {
             "enabled": True,
-            "total_scanned": scanned,
-            "total_modified": modified,
-            "total_skipped": skipped,
-            "total_failed": failed,
+            "total_scanned": len(entries),
+            "total_modified": sum(1 for e in entries if e["status"] == "changed"),
+            "total_skipped": sum(1 for e in entries if e["status"] == "skipped"),
+            "total_failed": sum(1 for e in entries if e["status"] == "failed"),
             "results": entries,
         }
 
@@ -969,15 +1250,16 @@ def apply_stable_framework_patches(work_dir: Path) -> dict:
         "generated": datetime.now(timezone.utc).isoformat(),
         "work_dir": str(work_dir),
         "patches": {
-            "signature_verification_bypass": _summary(sig_entries),
-            "invoke_custom_handling": _summary(ic_entries),
-            "fix_bootloop_a15": _summary(bl_entries),
+            "signature_verification_bypass":     _summary(sig_entries),
+            "invoke_custom_handling":             _summary(ic_entries),
+            "fix_bootloop_a15":                   _summary(bl_entries),
+            "miui_services_cn_global_patches":    _summary(msvc_entries),
         },
         "totals": {
-            "total_scanned": len(all_entries),
+            "total_scanned":  len(all_entries),
             "total_modified": sum(1 for e in all_entries if e["status"] == "changed"),
-            "total_skipped": sum(1 for e in all_entries if e["status"] == "skipped"),
-            "total_failed": sum(1 for e in all_entries if e["status"] == "failed"),
+            "total_skipped":  sum(1 for e in all_entries if e["status"] == "skipped"),
+            "total_failed":   sum(1 for e in all_entries if e["status"] == "failed"),
         },
     }
 
