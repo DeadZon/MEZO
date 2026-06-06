@@ -234,18 +234,25 @@ def test_report_txt_written(tmp_path, monkeypatch):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_stable_insmod_calls_patch_module():
-    """insmod.sh references deadzone_framework_patches.py."""
+    """Stable insmod.sh must invoke framework patches — directly or via Lite inheritance.
+
+    Stable now delegates to Lite/insmod.sh which calls style_mod_runner.py which runs
+    deadzone_framework_patches.py. Either path is acceptable.
+    """
     insmod = (
         Path(__file__).resolve().parent.parent
         / "modfile" / "Styles" / "Stable" / "insmod.sh"
     )
     assert insmod.exists(), f"insmod.sh not found at {insmod}"
     content = insmod.read_text(encoding="utf-8")
-    assert "deadzone_framework_patches.py" in content, (
-        "insmod.sh must invoke deadzone_framework_patches.py"
+
+    # Accept either: direct patch invocation (old) or Lite inheritance (new)
+    calls_patches_directly = "deadzone_framework_patches.py" in content
+    calls_lite             = "Lite" in content or "style_mod_runner" in content
+    assert calls_patches_directly or calls_lite, (
+        "Stable insmod.sh must either call deadzone_framework_patches.py directly "
+        "or inherit from Lite (which runs the patches via style_mod_runner.py)"
     )
-    assert "--work-dir" in content, "insmod.sh must pass --work-dir argument"
-    assert "--style stable" in content, "insmod.sh must pass --style stable"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

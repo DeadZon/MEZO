@@ -1049,8 +1049,8 @@ def main() -> None:
     )
     parser.add_argument("--work-dir", required=True,
                         help="Path to the ROM work directory (contains framework_unpacked/ etc.)")
-    parser.add_argument("--style", choices=["stable"], default="stable",
-                        help="Patch style to apply (stable = all 3 patches)")
+    parser.add_argument("--style", choices=["stable", "lite"], default="stable",
+                        help="Patch style to apply (stable/lite = all 3 patches)")
     args = parser.parse_args()
 
     work_dir = Path(args.work_dir)

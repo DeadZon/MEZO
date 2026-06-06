@@ -1,0 +1,95 @@
+{
+  "style": "lite",
+  "name": "DeadZone Lite",
+  "description": "Base modified ROM style — all automatic ROM mods run here. Stable/Legend/Ninja inherit Lite.",
+  "mods": [
+    {
+      "id": "signature_verification_bypass",
+      "name": "Signature Verification Bypass",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "lite"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": true,
+      "description": "Bypasses APK signature verification on A14/A15/A16 via smali patches to ApkSigningBlockUtils, StrictJarVerifier, SigningDetails, and related classes"
+    },
+    {
+      "id": "invoke_custom_handling",
+      "name": "invoke-custom handling",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "lite"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": true,
+      "description": "Handles invoke-custom smali instructions in framework — replaces equals/hashCode/toString bodies that contain invoke-custom with safe stubs"
+    },
+    {
+      "id": "fix_bootloop_a15",
+      "name": "fix bootloop A15",
+      "source_stage": "framework_patches",
+      "python_entry": "bin/scripts/deadzone_framework_patches.py",
+      "args": ["--style", "lite"],
+      "group": "deadzone_framework_patches",
+      "enabled": true,
+      "required": true,
+      "description": "Fixes A15 bootloop caused by specific smali files across framework_unpacked, services_unpacked, and miui_services_unpacked"
+    },
+    {
+      "id": "kousei_kaorios_toolbox",
+      "name": "Kousei / Kaorios Toolbox",
+      "source_stage": "UpdateFile/DeadZone_KaoriosToolbox",
+      "python_entry": "bin/scripts/deadzone_kaorios_toolbox.py",
+      "args": ["--style", "lite"],
+      "enabled": true,
+      "required": false,
+      "description": "Kaorios Toolbox V2.0.4 integration: APK install, privapp XML, build.prop, classes.dex injection, and V2.0.3+ smali hooks"
+    },
+    {
+      "id": "os1_mods",
+      "name": "OS1 Mods",
+      "source_stage": "OS1",
+      "script_path": "bin/modfile/OS1/insmod.sh",
+      "enabled": true,
+      "required": false,
+      "description": "OS1 (HyperOS 1 / MIUI) specific ROM mods — conditional on rom_os=OS1"
+    },
+    {
+      "id": "os2_mods",
+      "name": "OS2 Mods",
+      "source_stage": "OS2",
+      "script_path": "bin/modfile/OS2/insmod.sh",
+      "enabled": true,
+      "required": false,
+      "description": "OS2 (HyperOS 2) specific ROM mods — conditional on rom_os=OS2"
+    },
+    {
+      "id": "os3_mods",
+      "name": "OS3 Mods",
+      "source_stage": "OS3",
+      "script_path": "bin/modfile/OS3/insmod.sh",
+      "enabled": true,
+      "required": false,
+      "description": "OS3 (HyperOS 3) specific ROM mods — conditional on rom_os=OS3"
+    },
+    {
+      "id": "universal_mods",
+      "name": "Universal Mods",
+      "source_stage": "Universal",
+      "script_path": "bin/modfile/Universal/insfile.sh",
+      "enabled": true,
+      "required": false,
+      "description": "Universal ROM mods applied to all devices and all OS versions"
+    },
+    {
+      "id": "updatefile_mods",
+      "name": "UpdateFile Mods",
+      "source_stage": "UpdateFile",
+      "script_path": "bin/modfile/UpdateFile/insupdate.sh",
+      "enabled": true,
+      "required": false,
+      "description": "UpdateFile ROM mods (device patches, region fixes, theme, fonts). DeadZone_FrameworkPatcher and DeadZone_KaoriosToolbox in UpdateFile remain gated by their env flags to prevent duplicate execution."
+    }
+  ]
+}

@@ -38,7 +38,7 @@ from typing import Optional
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 WORK_DIR     = Path.cwd()
-REPORTS_DIR  = WORK_DIR / "output" / "reports"
+REPORTS_DIR  = WORK_DIR / "bin" / "output" / "reports"
 DDEVICE_DIR  = WORK_DIR / "bin" / "ddevice"
 BUILD_IMAGES = WORK_DIR / "build" / "baserom" / "images"
 ASSET_DIR    = WORK_DIR / "bin" / "third_party" / "kaorios_toolbox"
@@ -1289,12 +1289,18 @@ def write_error_report(stage: str, exc_str: str) -> None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser(description="DeadZone Kaorios Toolbox Integration")
+    ap.add_argument("--style", default=os.environ.get("DZ_STYLE_ID", "stable"),
+                    help="DeadZone style (lite/stable/legend/ninja)")
+    args = ap.parse_args()
+
     _log("===== DeadZone Kaorios Toolbox Integration =====")
     _log(f"Time:    {_ts()}")
     _log(f"Version: {KAORIOS_VERSION}  (tag {KAORIOS_TAG})")
 
     run = KaoriosRun(
-        style      = os.environ.get("DZ_STYLE_ID", "stable"),
+        style      = args.style,
         style_tier = os.environ.get("DZ_STYLE_TIER", "Free"),
         android_ver = _dread("androidver.txt") or "unknown",
         codename   = _dread("device_f.txt") or _dread("device_code.txt") or "unknown",

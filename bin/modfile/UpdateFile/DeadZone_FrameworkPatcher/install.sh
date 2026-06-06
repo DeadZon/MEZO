@@ -1,38 +1,29 @@
 #!/usr/bin/env bash
-# DeadZone Framework Patcher — base mod installer
+# DeadZone Framework Patcher — compatibility wrapper (DISABLED)
 #
-# Runs for ALL DeadZone styles (Stable, Legend, and future styles).
-# Automatically discovered and executed by bin/modfile/UpdateFile/insupdate.sh.
+# The three framework patches (Signature Verification Bypass, invoke-custom handling,
+# fix bootloop A15) are now applied by the Lite style engine:
+#   bin/scripts/style_mod_runner.py --style lite
+#   Manifest: bin/styles/Lite/mods.json
+#   Patch script: bin/scripts/deadzone_framework_patches.py
 #
-# Features applied:
-#   - Signature Verification Bypass
-#   - invoke-custom handling
-#
-# Both features are base DeadZone features, not style-specific.
-# Legend and future styles inherit them from this base installer.
+# This wrapper remains in UpdateFile/ to prevent insupdate.sh from failing
+# when it discovers *.sh files. It exits 0 without running any patches.
+# The env-flag gate (ENABLE_DEADZONE_FRAMEWORK_PATCHER) prevents duplicate
+# execution if this file is ever re-enabled.
 
 set -euo pipefail
 
 work_dir=$(pwd)
-source "$work_dir/functions.sh"
 
 if [ "${ENABLE_DEADZONE_FRAMEWORK_PATCHER:-false}" != "true" ]; then
-    mods "[DeadZone_FrameworkPatcher] Disabled temporarily — skipping Signature Verification Bypass + invoke-custom"
+    echo "[DeadZone_FrameworkPatcher] Handled by Lite style engine — skipping compatibility wrapper."
     exit 0
 fi
 
-mods "DeadZone Framework Patcher — Signature Verification Bypass + invoke-custom"
-
-python3 "$work_dir/bin/scripts/deadzone_framework_patcher.py"
-PATCHER_EXIT=$?
-
-if [ $PATCHER_EXIT -ne 0 ]; then
-    error "DeadZone Framework Patcher FAILED (exit $PATCHER_EXIT)"
-    error "Check output/reports/framework_patcher_error.txt for details"
-    exit $PATCHER_EXIT
-fi
-
-mods "DeadZone Framework Patcher — Done"
-
-# Write active mods report for this build
-python3 "$work_dir/bin/scripts/write_active_mods_report.py" || true
+# If the flag is explicitly set to true (unusual), delegate to the new runner.
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+echo "[DeadZone_FrameworkPatcher] Delegating to style_mod_runner.py (Lite)..."
+python3 "$PROJECT_ROOT/bin/scripts/style_mod_runner.py" \
+    --style lite \
+    --work-dir "$PROJECT_ROOT"

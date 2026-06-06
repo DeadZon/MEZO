@@ -136,13 +136,10 @@ bash $work_dir/bin/ddevice/fetchINFO.sh
 bash $work_dir/bin/ddevice/DEBLOAT/debloat.sh
 info "Done"
 
-bash $work_dir/bin/modfile/OS1/insmod.sh
-bash $work_dir/bin/modfile/OS2/insmod.sh
-bash $work_dir/bin/modfile/OS3/insmod.sh
-bash $work_dir/bin/modfile/Universal/insfile.sh
-bash $work_dir/bin/modfile/UpdateFile/insupdate.sh
-
 # ── Style-specific mods ───────────────────────────────────────────────────────
+# OS1/OS2/OS3/Universal/UpdateFile mods are now routed through the Lite style
+# engine (bin/scripts/style_mod_runner.py + bin/styles/Lite/mods.json).
+# All styles inherit Lite, so every style gets the full base mod set.
 _DZ_STYLE_ID="${DZ_STYLE_ID:-stable}"
 case "${_DZ_STYLE_ID,,}" in
     lite)   _DZ_STYLE_DIR="Lite"   ;;

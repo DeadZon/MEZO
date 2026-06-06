@@ -12,15 +12,16 @@ import time
 from pathlib import Path
 
 WORK_DIR    = Path(__file__).parent.parent.parent
-REPORTS_DIR = WORK_DIR / "output" / "reports"
+REPORTS_DIR = WORK_DIR / "bin" / "output" / "reports"
 
-# Feature flag defaults — all new framework/JAR/Kaorios mods temporarily disabled
+# Feature flags — Lite-based mods (sig bypass, invoke-custom, bootloop, Kaorios) are ON by default.
+# JAR mods and experimental mods remain opt-in.
 _FLAGS: dict[str, tuple[str, bool]] = {
     # (env_var, default_enabled)
-    "ENABLE_DEADZONE_FRAMEWORK_PATCHER":    ("ENABLE_DEADZONE_FRAMEWORK_PATCHER",    False),
-    "ENABLE_SIGNATURE_VERIFICATION_BYPASS": ("ENABLE_SIGNATURE_VERIFICATION_BYPASS", False),
-    "ENABLE_INVOKE_CUSTOM":                 ("ENABLE_INVOKE_CUSTOM",                 False),
-    "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      ("ENABLE_DEADZONE_KAORIOS_TOOLBOX",      False),
+    "ENABLE_SIGNATURE_VERIFICATION_BYPASS": ("ENABLE_SIGNATURE_VERIFICATION_BYPASS", True),
+    "ENABLE_INVOKE_CUSTOM":                 ("ENABLE_INVOKE_CUSTOM",                 True),
+    "ENABLE_FIX_BOOTLOOP_A15":              ("ENABLE_FIX_BOOTLOOP_A15",              True),
+    "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      ("ENABLE_DEADZONE_KAORIOS_TOOLBOX",      True),
     "ENABLE_DEADZONE_JAR_MODS":             ("ENABLE_DEADZONE_JAR_MODS",             False),
     "ENABLE_DEADZONE_MEZO_FRAMEWORK_MODS":  ("ENABLE_DEADZONE_MEZO_FRAMEWORK_MODS",  False),
     "ENABLE_MYMEZO_DERIVED_PATCHES":        ("ENABLE_MYMEZO_DERIVED_PATCHES",        False),
@@ -29,10 +30,10 @@ _FLAGS: dict[str, tuple[str, bool]] = {
 
 # Human-readable labels for each flag
 _LABELS: dict[str, str] = {
-    "ENABLE_DEADZONE_FRAMEWORK_PATCHER":    "DeadZone_FrameworkPatcher",
     "ENABLE_SIGNATURE_VERIFICATION_BYPASS": "Signature Verification Bypass",
     "ENABLE_INVOKE_CUSTOM":                 "invoke-custom handling",
-    "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      "DeadZone_KaoriosToolbox",
+    "ENABLE_FIX_BOOTLOOP_A15":              "fix bootloop A15",
+    "ENABLE_DEADZONE_KAORIOS_TOOLBOX":      "Kousei / Kaorios Toolbox",
     "ENABLE_DEADZONE_JAR_MODS":             "DeadZone_JarMods",
     "ENABLE_DEADZONE_MEZO_FRAMEWORK_MODS":  "DeadZone_MEZOFramework",
     "ENABLE_MYMEZO_DERIVED_PATCHES":        "MyMezo-derived patches",
@@ -77,13 +78,15 @@ def write_report() -> None:
     for m in disabled:
         lines.append(f"  [OFF] {m}")
 
+    lite_report = WORK_DIR / "bin" / "output" / "reports" / "lite_mod_report.json"
     lines += [
         "",
         "Notes:",
-        "  - All new framework/JAR/Kaorios mods are temporarily disabled (default=false).",
-        "  - No Python patchers, JAR decode/rebuild, or APK/XML installs will run.",
-        "  - To re-enable a mod set its flag to true, e.g. ENABLE_DEADZONE_FRAMEWORK_PATCHER=true.",
-        "  - Old normal mods (OS1/OS2/OS3, Universal, existing UpdateFile mods) are unaffected.",
+        "  - Signature Verification Bypass, invoke-custom, fix bootloop A15, and Kaorios",
+        "    Toolbox are ON by default — run by the Lite style engine (style_mod_runner.py).",
+        "  - JAR mods and experimental mods remain opt-in via env flags.",
+        "  - OS1/OS2/OS3/Universal/UpdateFile mods are routed through the Lite style engine.",
+        f"  - Lite mod runner report: {lite_report}",
     ]
 
     out = REPORTS_DIR / "active_mods_report.txt"

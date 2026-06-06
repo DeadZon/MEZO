@@ -1,39 +1,28 @@
 #!/usr/bin/env bash
-# DeadZone Kaorios Toolbox — base mod installer
+# DeadZone Kaorios Toolbox — compatibility wrapper (DISABLED)
 #
-# Runs for ALL DeadZone styles (Stable, Legend, and future styles).
-# Automatically discovered and executed by bin/modfile/UpdateFile/insupdate.sh.
+# Kousei / Kaorios Toolbox is now applied by the Lite style engine:
+#   bin/scripts/style_mod_runner.py --style lite
+#   Manifest: bin/styles/Lite/mods.json
+#   Toolbox script: bin/scripts/deadzone_kaorios_toolbox.py
 #
-# Features applied:
-#   - Kaorios Toolbox APK install (system_ext/priv-app)
-#   - privapp whitelist XML install
-#   - build.prop property injection
-#   - Kaorios classes.dex injection into framework.jar
-#   - V2.0.3+ smali hooks: Instrumentation, ApplicationPackageManager,
-#     AndroidKeyStoreKeyPairGeneratorSpi, AndroidKeyStoreSpi, SystemServer
-#
-# This is a base DeadZone feature, not style-specific.
-# Legend and future styles inherit it from this base installer.
+# This wrapper remains in UpdateFile/ to prevent insupdate.sh from failing
+# when it discovers *.sh files. It exits 0 without running any patches.
+# The env-flag gate (ENABLE_DEADZONE_KAORIOS_TOOLBOX) prevents duplicate
+# execution if this file is ever re-enabled.
 
 set -euo pipefail
 
 work_dir=$(pwd)
-source "$work_dir/functions.sh"
 
 if [ "${ENABLE_DEADZONE_KAORIOS_TOOLBOX:-false}" != "true" ]; then
-    mods "[DeadZone_KaoriosToolbox] Disabled temporarily — skipping Kaorios Toolbox integration"
+    echo "[DeadZone_KaoriosToolbox] Handled by Lite style engine — skipping compatibility wrapper."
     exit 0
 fi
 
-mods "DeadZone Kaorios Toolbox — Integrating V2.0.4 as base feature"
-
-python3 "$work_dir/bin/scripts/deadzone_kaorios_toolbox.py"
-KAORIOS_EXIT=$?
-
-if [ $KAORIOS_EXIT -ne 0 ]; then
-    error "DeadZone Kaorios Toolbox FAILED (exit $KAORIOS_EXIT)"
-    error "Check output/reports/kaorios_error_report.txt for details"
-    exit $KAORIOS_EXIT
-fi
-
-mods "DeadZone Kaorios Toolbox — Done"
+# If the flag is explicitly set to true (unusual), delegate to the new runner.
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
+echo "[DeadZone_KaoriosToolbox] Delegating to style_mod_runner.py (Lite)..."
+python3 "$PROJECT_ROOT/bin/scripts/style_mod_runner.py" \
+    --style lite \
+    --work-dir "$PROJECT_ROOT"

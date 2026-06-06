@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# DeadZone Stable style mods
-# Called after base mods run, before repacking.
-set -e
+# DeadZone Stable — inherits Lite, then applies Stable-specific mods.
+set -euo pipefail
 
 work_dir=${work_dir:-$(pwd)}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-PATCHES_PY="$PROJECT_ROOT/bin/scripts/deadzone_framework_patches.py"
+LITE_INSMOD="$SCRIPT_DIR/../Lite/insmod.sh"
 
-echo "[STYLE] Stable: running DeadZone framework patches (sig bypass, invoke-custom, bootloop A15)..."
+echo "[STYLE] Stable: inheriting Lite base mods..."
 
-if ! python3 "$PATCHES_PY" --work-dir "$work_dir" --style stable; then
-    echo "[STYLE][ERROR] deadzone_framework_patches.py exited with error — aborting." >&2
+if ! bash "$LITE_INSMOD"; then
+    echo "[STYLE][ERROR] Lite insmod failed — aborting Stable." >&2
     exit 1
 fi
 
+echo "[STYLE] Stable: no extra Stable-only patches yet."
 echo "[STYLE] Stable mods complete."
