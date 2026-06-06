@@ -37,7 +37,7 @@ MAX_CAPTION  = 1024  # Telegram photo caption limit
 # Link hrefs are hardcoded except download_url which is URL-safe from PixelDrain.
 
 POST_TEMPLATE = """\
-DeadZone v1.1 {hyperos_version} {region}Stable {android} {os_tag}
+DeadZone v1.1 {hyperos_version} {region} Stable {android} {os_tag}
 
 Devices:
 {device_name}

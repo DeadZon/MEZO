@@ -90,6 +90,16 @@
       "enabled": true,
       "required": false,
       "description": "UpdateFile ROM mods (device patches, region fixes, theme, fonts). DeadZone_FrameworkPatcher and DeadZone_KaoriosToolbox in UpdateFile remain gated by their env flags to prevent duplicate execution."
+    },
+    {
+      "id": "poco_launcher_to_miuihome_spoofing",
+      "name": "POCO Launcher to MiuiHome Spoofing",
+      "source_stage": "vendor_odm_props",
+      "python_entry": "bin/scripts/poco_launcher_spoof.py",
+      "args": ["--style", "lite"],
+      "enabled": true,
+      "required": false,
+      "description": "Detects POCO brand ROM via ro.product.vendor.brand=POCO in vendor/odm prop files and replaces the value with Redmi so MiuiHome launcher loads instead of POCO Launcher. Skipped automatically on non-POCO ROMs."
     }
   ]
 }

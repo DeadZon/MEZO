@@ -1768,6 +1768,8 @@ def _write_summary(
     nested_root: str | None = None,
     uncompressed_bytes: int = 0,
     zip_tool: str = "python-zipfile",
+    style_id: str = "stable",
+    naming_scheme: str = "standard",
 ) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     compressed_bytes = zip_path.stat().st_size
@@ -1778,7 +1780,9 @@ def _write_summary(
         "soc":                        cfg.get("soc_family", ""),
         "rom_os_version":             _read("base_rom_code.txt"),
         "android_version":            _read("androidver.txt"),
+        "final_style":                style_id,
         "final_zip_name":             zip_path.name,
+        "naming_scheme":              naming_scheme,
         "final_zip_path":             str(zip_path),
         "sha256":                     sha,
         "size_bytes":                 compressed_bytes,
@@ -2132,9 +2136,16 @@ def package() -> Path:
         f"({style_cfg['name']}, {style_cfg['tier']})"
     )
 
-    # Style prefix for ZIP name: DeadZone_Stable_... or DeadZone_Legend_...
-    style_prefix = style_cfg["id"].capitalize()   # "Stable" or "Legend"
-    zip_name = f"DeadZone_{style_prefix}_{_sanitize_name(codename)}_{rom_version}_A{android_ver}.zip"
+    # ZIP naming depends on style:
+    #   Lite  → DeadZone_Lite_<codename>_<os_version>.zip       (no _A<android_ver>)
+    #   Other → DeadZone_<Style>_<codename>_<os_version>_A<android_ver>.zip
+    style_prefix = style_cfg["id"].capitalize()
+    if style_cfg["id"] == "lite":
+        zip_name        = f"DeadZone_Lite_{_sanitize_name(codename)}_{rom_version}.zip"
+        _naming_scheme  = "lite"
+    else:
+        zip_name        = f"DeadZone_{style_prefix}_{_sanitize_name(codename)}_{rom_version}_A{android_ver}.zip"
+        _naming_scheme  = "standard"
     print(f"[PACKAGE] Building: {zip_name}")
 
     # ── Resolve device ────────────────────────────────────────────────────────
@@ -2427,6 +2438,8 @@ def package() -> Path:
         nested_root=nested_root,
         uncompressed_bytes=uncompressed_bytes,
         zip_tool=zip_tool,
+        style_id=style_cfg["id"],
+        naming_scheme=_naming_scheme,
     )
     _write_template_report(
         norm_soc=norm_soc,
