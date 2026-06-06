@@ -17,13 +17,17 @@ on:
         type: boolean
         default: true
       max_builds:
-        description: 'Maximum builds per run (must be 1)'
+        description: 'Maximum ROMs to build per run'
         default: '1'
       scan_pages:
         description: 'Number of TECH_MUKUL pages to scan (default 5)'
         default: '5'
       reset_queue:
         description: 'Clear the queue before scanning (removes all pending items)'
+        type: boolean
+        default: false
+      stop_on_first_failure:
+        description: 'Stop the build loop after the first build or upload failure'
         type: boolean
         default: false
 
@@ -42,6 +46,7 @@ jobs:
     env:
       PIXELDRAIN_API_KEY:            ${{ secrets.PIXELDRAIN_API_KEY }}
       TELEGRAM_BOT_TOKEN:            ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_STATUS_CHAT_ID:       ${{ secrets.TELEGRAM_STATUS_CHAT_ID }}
       TELEGRAM_PUBLISH_CHANNEL_ID:   ${{ secrets.TELEGRAM_PUBLISH_CHANNEL_ID }}
 
     steps:
@@ -56,11 +61,8 @@ jobs:
             echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
           fi
 
-          # Safety: cap max_builds at 1
           MAX="${{ inputs.max_builds }}"
-          if [ -z "$MAX" ] || [ "$MAX" -gt "1" ] 2>/dev/null; then
-            MAX=1
-          fi
+          [ -z "$MAX" ] && MAX=1
           echo "max_builds=$MAX" >> "$GITHUB_OUTPUT"
 
       # ── Disk space (only for build modes) ─────────────────────────────────
@@ -153,34 +155,23 @@ jobs:
         run: python3 scripts/prune_queue.py
 
       # ══════════════════════════════════════════════════════════════════════
-      #  BUILD
+      #  BUILD + UPLOAD + PUBLISH  (sequential multi-build loop)
       # ══════════════════════════════════════════════════════════════════════
-      - name: Validate queue item
-        if: ${{ steps.mode.outputs.mode == 'build_next' || steps.mode.outputs.mode == 'scan_and_build' }}
-        run: python3 scripts/build_next_stable.py --validate-only
-
-      - name: Build ROM (build.sh)
-        id: build_sh
+      - name: Build ROM loop
+        id: build_loop
         if: ${{ steps.mode.outputs.mode == 'build_next' || steps.mode.outputs.mode == 'scan_and_build' }}
         run: |
-          # build_next_stable.py orchestrates the full pipeline
-          python3 scripts/build_next_stable.py
-
-      # ══════════════════════════════════════════════════════════════════════
-      #  PUBLISH
-      # ══════════════════════════════════════════════════════════════════════
-      - name: Publish to Telegram
-        if: >
-          (steps.mode.outputs.mode == 'build_next' || steps.mode.outputs.mode == 'scan_and_build') &&
-          success() &&
-          (github.event_name != 'workflow_dispatch' || inputs.auto_publish == true)
-        run: |
-          if [ ! -f "assets/telegram/stable_release.jpg" ]; then
-            echo "::warning::assets/telegram/stable_release.jpg is missing — skipping publish"
-            echo "[PUBLIC_PUBLISH_SKIPPED] reason=image_not_found"
-            exit 0
+          EXTRA_ARGS=""
+          # auto_publish: true when explicitly set on workflow_dispatch, or for scheduled runs
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ inputs.auto_publish }}" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --auto-publish"
           fi
-          python3 scripts/publish_stable_release.py
+          if [ "${{ inputs.stop_on_first_failure }}" = "true" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --stop-on-first-failure"
+          fi
+          python3 scripts/build_next_stable.py \
+            --max-builds "${{ steps.mode.outputs.max_builds }}" \
+            $EXTRA_ARGS
 
       # ══════════════════════════════════════════════════════════════════════
       #  ARTIFACTS  (reports + logs + queue/state only — no ROM ZIPs)

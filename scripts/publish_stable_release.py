@@ -19,6 +19,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from html import escape
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -31,21 +32,20 @@ TELEGRAM_API = "https://api.telegram.org"
 MAX_CAPTION  = 1024  # Telegram photo caption limit
 
 
-# ── Post template ──────────────────────────────────────────────────────────────
+# ── Post template (HTML, parse_mode="HTML") ────────────────────────────────────
+# Dynamic fields are escaped with html.escape before insertion.
+# Link hrefs are hardcoded except download_url which is URL-safe from PixelDrain.
 
 POST_TEMPLATE = """\
-DeadZone v1.1 {hyperos_version} {region} Stable {android} {os_tag}
+DeadZone v1.1 {hyperos_version} {region}Stable {android} {os_tag}
 
 Devices:
 {device_name}
+Code Name: #{codename}
 
-Code Name:
-#{codename}
+Date: {publish_date}
 
-Date:
-{publish_date}
-
-Based on pure Global and China ROMs
+Based on pure Global, China, Indian, Indonesian ROMs
 
 Style:
 DeadZone Stable
@@ -53,35 +53,28 @@ DeadZone Stable
 Developer:
 MEZO
 
-Changelog:
-{changelog_url}
+Changelog: <a href="https://t.me/xDeadZone/430">Here</a>
 
-Downloads:
-{download_url}
+Downloads: <a href="{download_url}">Here</a>
 
-Screenshots:
-{screenshots_url}
+Screenshots: <a href="https://t.me/DeadZoneCloud/572">Here</a>
 
-Discussion:
-{discussion_url}
+Discussion: <a href="https://t.me/DeadZoneDiscussion">Here</a>
 
 #{codename} #OS3 #HyperOS3 #{android_tag} #DeadZone #MEZO"""
 
 
 def render_post(payload: dict) -> str:
     return POST_TEMPLATE.format(
-        hyperos_version = payload["hyperos_version"],
-        region          = payload["region"],
-        android         = payload["android"],
-        os_tag          = payload["os_tag"],
-        device_name     = payload["device_name"],
-        codename        = payload["codename"],
-        publish_date    = payload["publish_date"],
-        changelog_url   = payload["changelog_url"],
-        download_url    = payload["download_url"],
-        screenshots_url = payload["screenshots_url"],
-        discussion_url  = payload["discussion_url"],
-        android_tag     = payload["android_tag"],
+        hyperos_version = escape(payload["hyperos_version"]),
+        region          = escape(payload["region"]),
+        android         = escape(payload["android"]),
+        os_tag          = escape(payload["os_tag"]),
+        device_name     = escape(payload["device_name"]),
+        codename        = escape(payload["codename"]),
+        publish_date    = escape(payload["publish_date"]),
+        android_tag     = escape(payload["android_tag"]),
+        download_url    = escape(payload["download_url"]),
     )
 
 
@@ -141,13 +134,14 @@ def _tg_send_photo(
     chat_id: str,
     image_path: Path,
     caption: str,
+    parse_mode: str = "HTML",
 ) -> dict:
     """Send a photo with caption via Bot API. Returns API response dict."""
     image_data = image_path.read_bytes()
     mime = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
 
     body, content_type = _multipart_encode(
-        fields={"chat_id": str(chat_id), "caption": caption, "parse_mode": ""},
+        fields={"chat_id": str(chat_id), "caption": caption, "parse_mode": parse_mode},
         files={"photo": (image_path.name, image_data, mime)},
     )
 
@@ -161,11 +155,19 @@ def _tg_send_photo(
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
-def _tg_send_message(token: str, chat_id: str, text: str) -> dict:
-    """Send a plain text message via Bot API."""
-    payload_bytes = json.dumps(
-        {"chat_id": str(chat_id), "text": text}
-    ).encode("utf-8")
+def _tg_send_message(
+    token: str,
+    chat_id: str,
+    text: str,
+    parse_mode: str = "HTML",
+) -> dict:
+    """Send an HTML message via Bot API."""
+    payload_bytes = json.dumps({
+        "chat_id":                  str(chat_id),
+        "text":                     text,
+        "parse_mode":               parse_mode,
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
     req = urllib.request.Request(
         _tg_url(token, "sendMessage"),
         data=payload_bytes,
@@ -194,10 +196,10 @@ def publish(
         print("-" * 60)
         return True
 
-    # If caption fits in the Telegram limit, send as one photo+caption
-    if len(post_text) <= MAX_CAPTION:
+    # If caption fits in the Telegram limit, send as one photo+caption (HTML)
+    if len(post_text.encode("utf-8")) <= MAX_CAPTION:
         try:
-            resp = _tg_send_photo(token, channel_id, image_path, post_text)
+            resp = _tg_send_photo(token, channel_id, image_path, post_text, parse_mode="HTML")
             if not resp.get("ok"):
                 log("PUBLISH_ERROR", details=str(resp))
                 return False
@@ -205,10 +207,10 @@ def publish(
             log("PUBLISH_ERROR", details=str(exc))
             return False
     else:
-        # Photo with short caption, then full text as separate message
+        # Caption too long: send photo with plain fallback caption, then full HTML post
         short_caption = "DeadZone Stable ROM Released"
         try:
-            resp = _tg_send_photo(token, channel_id, image_path, short_caption)
+            resp = _tg_send_photo(token, channel_id, image_path, short_caption, parse_mode="")
             if not resp.get("ok"):
                 log("PUBLISH_ERROR", step="photo", details=str(resp))
                 return False
@@ -217,7 +219,7 @@ def publish(
             return False
 
         try:
-            resp = _tg_send_message(token, channel_id, post_text)
+            resp = _tg_send_message(token, channel_id, post_text, parse_mode="HTML")
             if not resp.get("ok"):
                 log("PUBLISH_ERROR", step="text", details=str(resp))
                 return False

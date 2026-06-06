@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""DeadZone Auto Stable Builder — build the next queued ROM.
+"""DeadZone Auto Stable Builder — build queued ROMs in sequence.
 
-Picks the first 'queued' item from output/queue/auto_build_queue.json,
-runs the existing build pipeline (build.sh → packROM.sh → package_rom.py),
-uploads the final ZIP to PixelDrain, and writes publish_payload.json.
+Picks queued items from output/queue/auto_build_queue.json, runs the
+existing build pipeline (build.sh → packROM.sh → package_rom.py),
+uploads each ZIP to PixelDrain, and optionally publishes to Telegram.
 
 Usage:
-  python3 scripts/build_next_stable.py [--validate-only]
+  python3 scripts/build_next_stable.py [--max-builds N]
+                                        [--auto-publish]
+                                        [--stop-on-first-failure]
+                                        [--validate-only]
 
 Required env:
   PIXELDRAIN_API_KEY
 
 Optional env:
-  DZ_REPO_ROOT   override repo root (defaults to script parent dir)
+  TELEGRAM_BOT_TOKEN          used by TelegramAutoBuildStatus
+  TELEGRAM_STATUS_CHAT_ID     private status channel (status messages)
+  TELEGRAM_PUBLISH_CHANNEL_ID public release channel (publish_stable_release)
+  DZ_REPO_ROOT                override repo root (defaults to script parent dir)
 """
 from __future__ import annotations
 
@@ -37,6 +43,7 @@ from _common import (
     _now_iso, log,
 )
 from prune_queue import prune_queue
+from auto_build_status import TelegramAutoBuildStatus
 
 REPORT_FILE = REPORTS_DIR / "auto_stable_builder_report.txt"
 BUILD_LOG   = LOGS_DIR / "build_next_stable.log"
@@ -93,7 +100,6 @@ def _run(cmd: list[str], env: dict, label: str) -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    # Tee output to log and stdout
     output = proc.stdout.decode("utf-8", errors="replace") if proc.stdout else ""
     for line in output.splitlines():
         print(line)
@@ -171,7 +177,6 @@ def run_pixeldrain_upload(env: dict) -> tuple[str, str, str]:
         log("BUILD_FAILED", reason="pixeldrain_upload_failed")
         return "", zip_name, zip_size
 
-    # Read report
     if PD_REPORT.is_file():
         try:
             pd = json.loads(PD_REPORT.read_text(encoding="utf-8"))
@@ -253,26 +258,32 @@ def write_publish_payload(
 # ── Report ─────────────────────────────────────────────────────────────────────
 
 def _write_final_report(
-    item: dict | None,
+    last_item: dict | None,
     build_ok: bool,
     download_url: str,
     queue_size: int,
     fail_reason: str = "",
+    built_count: int = 0,
+    published_count: int = 0,
+    failed_count: int = 0,
 ) -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     lines = [
         "DeadZone Auto Stable Builder — Build Report",
         "=" * 50,
         f"Run at:       {_now_iso()}",
+        f"Built:        {built_count}",
+        f"Published:    {published_count}",
+        f"Failed:       {failed_count}",
         "",
     ]
-    if item:
+    if last_item:
         lines += [
-            f"Selected:     {item.get('codename')} {item.get('version')} {item.get('region')}",
-            f"Source post:  {item.get('source_post_url', '')}",
-            f"ROM URL:      {item.get('rom_url', '')}",
-            f"ROM type:     {item.get('rom_type', '')}",
-            f"SoC:          {item.get('soc', '')}",
+            f"Last item:    {last_item.get('codename')} {last_item.get('version')} {last_item.get('region')}",
+            f"Source post:  {last_item.get('source_post_url', '')}",
+            f"ROM URL:      {last_item.get('rom_url', '')}",
+            f"ROM type:     {last_item.get('rom_type', '')}",
+            f"SoC:          {last_item.get('soc', '')}",
             "",
             f"Build result: {'SUCCESS' if build_ok else 'FAILED'}",
         ]
@@ -281,7 +292,7 @@ def _write_final_report(
         if download_url:
             lines.append(f"PixelDrain:   {download_url}")
     else:
-        lines.append(f"No item selected. reason={fail_reason}")
+        lines.append(f"No item built. reason={fail_reason}")
     lines += [
         "",
         f"Queue size:   {queue_size}",
@@ -289,121 +300,233 @@ def _write_final_report(
     REPORT_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ── Main build loop ────────────────────────────────────────────────────────────
 
-def run_build(validate_only: bool = False) -> int:
+def run_build_loop(
+    max_builds: int = 1,
+    auto_publish: bool = False,
+    stop_on_first_failure: bool = False,
+    validate_only: bool = False,
+) -> int:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+    status = TelegramAutoBuildStatus()
+    status.run_started(max_builds)
+
+    log("AUTO_BUILD_LOOP_STARTED", max_builds=max_builds)
 
     supported = load_supported_codenames()
     if not supported:
         log("BUILD_FAILED", reason="no_supported_devices")
         return 1
 
-    # Prune stale/invalid items before selecting — catches entries that were
-    # queued before the version-suffix region fix (e.g. TWXM stored as Global).
-    prune_queue(supported=supported)
+    built_count     = 0
+    published_count = 0
+    failed_count    = 0
+    skipped_count   = 0
+    last_item: dict | None = None
+    last_url: str = ""
 
-    # Reload queue after pruning so the selection loop sees the clean state.
-    queue = load_queue()
-    if not queue:
-        log("QUEUE_EMPTY")
-        _write_final_report(None, False, "", 0, fail_reason="queue_empty")
-        return 0
+    for build_index in range(1, max_builds + 1):
+        # Prune and reload queue fresh each iteration
+        prune_result = prune_queue(supported=supported)
+        status.prune_done(
+            removed=prune_result["removed"],
+            remaining=prune_result["after"],
+        )
 
-    # Find first valid queued item
-    selected_item: dict | None = None
-    for item in queue:
-        if item.get("status") != "queued":
-            continue
-        ok, reason = validate_item(item, supported)
-        if ok:
-            selected_item = item
+        queue = load_queue()
+        if not queue:
+            log("QUEUE_EMPTY", at_index=build_index)
+            status.queue_count(0)
             break
+
+        status.queue_count(prune_result["after"])
+
+        # Find next valid queued item
+        selected_item: dict | None = None
+        for item in queue:
+            if item.get("status") != "queued":
+                continue
+            ok, reason = validate_item(item, supported)
+            if ok:
+                selected_item = item
+                break
+            else:
+                log("BUILD_SELECTED", skipped=item.get("id"), reason=reason)
+                item["status"] = "skipped"
+                skipped_count += 1
+
+        if not selected_item:
+            save_queue(queue)
+            log("QUEUE_EMPTY", msg=f"No valid queued items at index {build_index}")
+            break
+
+        log("AUTO_BUILD_ITEM_STARTED",
+            index=build_index,
+            codename=selected_item["codename"],
+            version=selected_item["version"],
+            region=selected_item["region"])
+        status.build_started(build_index, selected_item)
+
+        if validate_only:
+            print(f"[BUILD] --validate-only: would build {selected_item['id']}")
+            continue
+
+        # Mark as building
+        selected_item["status"] = "building"
+        selected_item["build_started_at"] = _now_iso()
+        save_queue(queue)
+
+        # Prepare environment
+        env = os.environ.copy()
+        env["DZ_STYLE"]           = "Stable"
+        env["DZ_STYLE_ID"]        = "stable"
+        env["DZ_STYLE_NAME"]      = "DeadZone Stable"
+        env["DZ_STYLE_TIER"]      = "Free"
+        env["INPUT_URL"]          = selected_item["rom_url"]
+        env["TG_SOC"]             = selected_item.get("soc", "snapdragon")
+        env["TELEGRAM_BOT_TOKEN"] = env.get("TELEGRAM_BOT_TOKEN", "")
+
+        # Run build pipeline
+        build_ok = run_build_pipeline(selected_item, env)
+
+        if not build_ok:
+            failed_count += 1
+            status.failed_count = failed_count
+            selected_item["status"] = "failed"
+            selected_item["failed_at"] = _now_iso()
+            save_queue(queue)
+            log("AUTO_BUILD_ITEM_FAILED",
+                index=build_index,
+                codename=selected_item["codename"],
+                reason="build_pipeline_failed")
+            status.build_failed(build_index, selected_item, reason="build_pipeline_failed")
+            last_item = selected_item
+            if stop_on_first_failure:
+                break
+            continue
+
+        # Upload to PixelDrain
+        status.upload_started(build_index, selected_item)
+        download_url, zip_name, zip_size = run_pixeldrain_upload(env)
+
+        if not download_url:
+            failed_count += 1
+            status.failed_count = failed_count
+            selected_item["status"] = "failed"
+            selected_item["failed_at"] = _now_iso()
+            save_queue(queue)
+            log("AUTO_BUILD_ITEM_FAILED",
+                index=build_index,
+                codename=selected_item["codename"],
+                reason="pixeldrain_upload_failed")
+            status.build_failed(build_index, selected_item, reason="pixeldrain_upload_failed")
+            last_item = selected_item
+            if stop_on_first_failure:
+                break
+            continue
+
+        status.upload_done(build_index, selected_item, download_url)
+
+        # SHA256 and publish payload
+        sha256 = _sha256_of_zip()
+        write_publish_payload(selected_item, download_url, zip_name, zip_size, sha256)
+
+        # Mark built
+        built_count += 1
+        status.built_count = built_count
+        selected_item["status"] = "built"
+        selected_item["built_at"] = _now_iso()
+        selected_item["download_url"] = download_url
+        save_queue(queue)
+        mark_built(selected_item)
+
+        status.build_succeeded(build_index, selected_item)
+        log("AUTO_BUILD_ITEM_BUILT",
+            index=build_index,
+            codename=selected_item["codename"],
+            version=selected_item["version"])
+
+        last_item = selected_item
+        last_url  = download_url
+
+        # Publish if requested
+        if auto_publish:
+            image_path = REPO_ROOT / "assets" / "telegram" / "stable_release.jpg"
+            if not image_path.is_file():
+                log("PUBLIC_PUBLISH_SKIPPED",
+                    reason="image_not_found",
+                    index=build_index)
+                status.publish_skipped(build_index, selected_item, reason="image_not_found")
+            else:
+                from publish_stable_release import run_publish
+                pub_rc = run_publish()
+                if pub_rc == 0:
+                    published_count += 1
+                    status.published_count = published_count
+                    log("AUTO_BUILD_ITEM_PUBLISHED",
+                        index=build_index,
+                        codename=selected_item["codename"],
+                        version=selected_item["version"])
+                    status.publish_sent(build_index, selected_item, download_url)
+                else:
+                    log("AUTO_BUILD_ITEM_FAILED",
+                        index=build_index,
+                        codename=selected_item["codename"],
+                        reason="publish_failed")
+                    status.publish_skipped(build_index, selected_item, reason="publish_failed")
         else:
-            log("BUILD_SELECTED", skipped=item.get("id"), reason=reason)
-            item["status"] = "skipped"
+            status.publish_skipped(build_index, selected_item, reason="auto_publish=false")
 
-    if not selected_item:
-        log("QUEUE_EMPTY", msg="No valid queued items found")
-        save_queue(queue)
-        _write_final_report(None, False, "", len(queue), fail_reason="no_valid_queue_item")
-        return 0
+    log("AUTO_BUILD_LOOP_DONE",
+        requested=max_builds,
+        built=built_count,
+        published=published_count,
+        failed=failed_count,
+        skipped=skipped_count)
+    status.run_finished(max_builds, built_count, published_count, failed_count, skipped_count)
 
-    log("BUILD_SELECTED",
-        codename=selected_item["codename"],
-        version=selected_item["version"],
-        region=selected_item["region"])
+    _write_final_report(
+        last_item,
+        build_ok=(last_item is not None and last_item.get("status") in ("built", "published")),
+        download_url=last_url,
+        queue_size=len(load_queue()),
+        fail_reason="" if built_count > 0 else "no_items_built",
+        built_count=built_count,
+        published_count=published_count,
+        failed_count=failed_count,
+    )
 
-    if validate_only:
-        print(f"[BUILD] --validate-only: would build {selected_item['id']}")
-        return 0
-
-    # Mark as building
-    selected_item["status"] = "building"
-    selected_item["build_started_at"] = _now_iso()
-    save_queue(queue)
-
-    # Prepare environment
-    env = os.environ.copy()
-    env["DZ_STYLE"]        = "Stable"
-    env["DZ_STYLE_ID"]     = "stable"
-    env["DZ_STYLE_NAME"]   = "DeadZone Stable"
-    env["DZ_STYLE_TIER"]   = "Free"
-    env["INPUT_URL"]       = selected_item["rom_url"]
-    env["TG_SOC"]          = selected_item.get("soc", "snapdragon")
-    # Disable live Telegram build dashboard in auto mode
-    env["TELEGRAM_BOT_TOKEN"] = env.get("TELEGRAM_BOT_TOKEN", "")
-
-    # Run build pipeline
-    build_ok = run_build_pipeline(selected_item, env)
-
-    if not build_ok:
-        selected_item["status"] = "failed"
-        selected_item["failed_at"] = _now_iso()
-        save_queue(queue)
-        _write_final_report(selected_item, False, "", len(queue), fail_reason="build_pipeline_failed")
-        return 1
-
-    # Upload to PixelDrain
-    download_url, zip_name, zip_size = run_pixeldrain_upload(env)
-    if not download_url:
-        selected_item["status"] = "failed"
-        selected_item["failed_at"] = _now_iso()
-        save_queue(queue)
-        _write_final_report(selected_item, False, "", len(queue), fail_reason="pixeldrain_upload_failed")
-        return 1
-
-    # Compute SHA256
-    sha256 = _sha256_of_zip()
-
-    # Write publish payload
-    write_publish_payload(selected_item, download_url, zip_name, zip_size, sha256)
-
-    # Mark item as built
-    selected_item["status"] = "built"
-    selected_item["built_at"] = _now_iso()
-    selected_item["download_url"] = download_url
-    save_queue(queue)
-
-    # Update state (dedupe tracker)
-    mark_built(selected_item)
-
-    # Write final report
-    _write_final_report(selected_item, True, download_url, len(queue))
-
-    print(f"[BUILD] Complete. ROM ready at: {download_url}")
-    return 0
+    return 0 if failed_count == 0 else 1
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build the next queued Stable ROM")
+    parser = argparse.ArgumentParser(description="Build queued Stable ROMs sequentially")
+    parser.add_argument(
+        "--max-builds", type=int, default=1,
+        help="Maximum number of ROMs to build in this run (default: 1)"
+    )
+    parser.add_argument(
+        "--auto-publish", action="store_true",
+        help="Publish each successful build to Telegram after upload"
+    )
+    parser.add_argument(
+        "--stop-on-first-failure", action="store_true",
+        help="Stop the loop after the first build or upload failure"
+    )
     parser.add_argument(
         "--validate-only", action="store_true",
         help="Validate queue and print what would be built, without running build"
     )
     args = parser.parse_args()
-    sys.exit(run_build(validate_only=args.validate_only))
+    sys.exit(run_build_loop(
+        max_builds=max(1, args.max_builds),
+        auto_publish=args.auto_publish,
+        stop_on_first_failure=args.stop_on_first_failure,
+        validate_only=args.validate_only,
+    ))
 
 
 if __name__ == "__main__":
