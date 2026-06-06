@@ -288,6 +288,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # ── Generate full mod report (aggregate all sub-reports before upload) ──
+      - name: Generate DeadZone full mod report
+        if: always()
+        run: |
+          python3 bin/scripts/deadzone_full_mod_report.py \
+            --work-dir "$GITHUB_WORKSPACE" \
+            --style "${DZ_STYLE:-Plus}" || true
+
       # ── Upload build reports artifact ────────────────────────────────────
       - name: Upload DeadZone build reports
         if: always()

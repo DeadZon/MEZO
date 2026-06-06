@@ -143,6 +143,7 @@ def _sysui_entry(
     found: bool,
     status: str,
     const_insertions: int = 0,
+    skipped_unsafe_try: int = 0,
     detail: str = "",
     error: Optional[str] = None,
     original_path: Optional[str] = None,
@@ -151,6 +152,15 @@ def _sysui_entry(
     restore_in_place: bool = False,
     permission: Optional[str] = None,
     os_detection: Optional[str] = None,
+    # Smali rebuild diagnostics
+    changed_smali_classes: Optional[list] = None,
+    changed_smali_folders: Optional[list] = None,
+    dex_files_rebuilt: Optional[list] = None,
+    dex_entries_replaced: Optional[list] = None,
+    smali_compile_tool: Optional[str] = None,
+    smali_compile_commands: Optional[list] = None,
+    smali_compile_stdout: Optional[str] = None,
+    smali_compile_stderr: Optional[str] = None,
 ) -> dict:
     return {
         "patch_name": "miuisystemui_volte_cn",
@@ -159,6 +169,7 @@ def _sysui_entry(
         "found": found,
         "status": status,
         "const_insertions_count": const_insertions,
+        "skipped_unsafe_try_count": skipped_unsafe_try,
         "detail": detail,
         "error": error,
         "original_path": original_path,
@@ -167,6 +178,14 @@ def _sysui_entry(
         "restore_in_place": restore_in_place,
         "permission": permission,
         "os_detection": os_detection,
+        "changed_smali_classes": changed_smali_classes or [],
+        "changed_smali_folders": changed_smali_folders or [],
+        "dex_files_rebuilt": dex_files_rebuilt or [],
+        "dex_entries_replaced": dex_entries_replaced or [],
+        "smali_compile_tool": smali_compile_tool,
+        "smali_compile_commands": smali_compile_commands or [],
+        "smali_compile_stdout": smali_compile_stdout,
+        "smali_compile_stderr": smali_compile_stderr,
     }
 
 
@@ -223,18 +242,46 @@ def _replace_flag(content: str, old_flag: str, new_flag: str) -> tuple[str, int]
     return (content.replace(old_flag, new_flag), count) if count else (content, 0)
 
 
-def _insert_const_below_sget(content: str, flag: str, const_value: str = "0x1") -> tuple[str, int]:
-    """Insert const/4 vX, const_value below sget-boolean lines referencing flag. Idempotent."""
+def _is_in_try_range(lines: list[str], line_idx: int) -> bool:
+    """Conservative check: return True if the line is inside a :try_start_/:try_end_ block."""
+    for i in range(line_idx - 1, -1, -1):
+        s = lines[i].strip()
+        if s.startswith(":try_start_"):
+            return True
+        if s.startswith(":try_end_") or s.startswith(".end method"):
+            return False
+    return False
+
+
+def _insert_const_below_sget(
+    content: str,
+    flag: str,
+    const_value: str = "0x1",
+    skip_unsafe_try: bool = True,
+) -> tuple[str, int, int]:
+    """Insert const/4 vX, const_value below sget-boolean lines referencing flag.
+
+    Returns (new_content, insertions_count, skipped_unsafe_count).
+    Idempotent: skips lines where the const already follows.
+    Skips insertions inside try ranges when skip_unsafe_try=True.
+    Rejects malformed registers (must match v[0-9]+ or p[0-9]+).
+    """
     lines = content.splitlines(True)
     out: list[str] = []
     insertions = 0
+    skipped_unsafe = 0
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
         if stripped.startswith("sget-boolean") and flag in stripped:
             reg = _extract_sget_register(stripped)
-            if reg:
+            if reg and re.match(r'^[vp]\d+$', reg):
+                if skip_unsafe_try and _is_in_try_range(lines, i):
+                    out.append(line)
+                    skipped_unsafe += 1
+                    i += 1
+                    continue
                 j = i + 1
                 while j < len(lines) and not lines[j].strip():
                     j += 1
@@ -248,7 +295,7 @@ def _insert_const_below_sget(content: str, flag: str, const_value: str = "0x1") 
                     continue
         out.append(line)
         i += 1
-    return "".join(out), insertions
+    return "".join(out), insertions, skipped_unsafe
 
 
 def _find_smali_class(smali_dirs: list[Path], class_name: str) -> Optional[Path]:
@@ -553,33 +600,35 @@ def _rebuild_miuisystemui_smali_only(
     unpacked_dir: Path,
     original_apk: Path,
     expected_name: str,
+    target_classes: Optional[list] = None,
 ) -> dict:
     """Smali-only fallback for MiuiSystemUI.apk: compile smali → DEX, repack into APK copy.
 
-    Replaces only the DEX entries — original resources stay binary-unchanged.
-    Completely avoids aapt2.
-    Returns same shape as _rebuild_and_restore().
+    Strategy:
+      1. Detect which smali folders contain the changed target classes.
+      2. Try to compile ALL smali folders.
+      3. If a non-changed folder fails: retry with only changed folders (replace only those DEX).
+      4. If a changed folder fails: fail with full diagnostics.
+      5. Replace only successfully compiled DEX entries; all other entries preserved from original.
+
+    Completely avoids aapt2. Returns same shape as _rebuild_and_restore() plus smali diagnostics.
     """
-    if _rph is not None:
-        smali_res = _rph.rebuild_apk_smali_only(
-            unpacked_dir, original_apk,
-            Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(original_apk.parent))),
-        )
-        if not smali_res["ok"]:
-            return {"ok": False, "rebuilt_path": None, "restored_path": None,
-                    "restore_in_place": False, "permission": None,
-                    "stdout": smali_res.get("stdout", ""),
-                    "stderr": smali_res.get("stderr", ""),
-                    "error": smali_res.get("reason", "smali rebuild failed")}
-        tmp_out = Path(smali_res.get("out_path", "")) if "out_path" in smali_res else None
-
-    # Inline implementation (mirrors rom_patch_helpers.rebuild_apk_smali_only)
     smali_jar = _find_smali_jar_path()
+    _searched_jar_paths = [
+        str(SCRIPT_DIR.parent / "apktool" / "smali-3.0.5.jar"),
+        str(SCRIPT_DIR.parent / "apktool" / "smali.jar"),
+        str(SCRIPT_DIR.parent / "tools" / "smali.jar"),
+    ]
     if not smali_jar:
-        return {"ok": False, "rebuilt_path": None, "restored_path": None,
-                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
-                "error": "smali.jar not found — cannot use smali-only fallback"}
+        return {
+            "ok": False, "rebuilt_path": None, "restored_path": None,
+            "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+            "smali_compile_tool": None,
+            "changed_smali_folders": [], "dex_files_rebuilt": [], "dex_entries_replaced": [],
+            "error": f"smali.jar not found — searched: {_searched_jar_paths}",
+        }
 
+    # Build smali_dir → dex_name map
     smali_map: list[tuple[Path, str]] = []
     for d in sorted(unpacked_dir.iterdir()):
         if not d.is_dir():
@@ -591,32 +640,110 @@ def _rebuild_miuisystemui_smali_only(
             smali_map.append((d, f"classes{n[len('smali_classes'):]}.dex"))
 
     if not smali_map:
-        return {"ok": False, "rebuilt_path": None, "restored_path": None,
-                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
-                "error": "No smali dirs found in unpacked_dir"}
+        return {
+            "ok": False, "rebuilt_path": None, "restored_path": None,
+            "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+            "smali_compile_tool": str(smali_jar),
+            "changed_smali_folders": [], "dex_files_rebuilt": [], "dex_entries_replaced": [],
+            "error": "No smali dirs found in unpacked_dir",
+        }
+
+    # Detect which smali folders contain the target (changed) classes
+    classes_to_find = list(target_classes or _SYSUI_TARGET_CLASSES)
+    changed_smali_folders: set[Path] = set()
+    for cls in classes_to_find:
+        for smali_dir, _ in smali_map:
+            if any(smali_dir.rglob(f"{cls}.smali")):
+                changed_smali_folders.add(smali_dir)
+                break
+    # If none of the target classes are located, treat all dirs as changed
+    if not changed_smali_folders:
+        changed_smali_folders = {d for d, _ in smali_map}
 
     import zipfile as _zf
     tmp_dir = Path(tempfile.mkdtemp(prefix="dz_msui_smali_"))
     tmp_out = Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(original_apk.parent)))
-    all_stderr: list[str] = []
 
     try:
-        compiled: list[tuple[Path, str]] = []
+        # Phase 1: compile ALL smali dirs
+        compile_results: dict[Path, dict] = {}
         for smali_dir, dex_name in smali_map:
             dex_out = tmp_dir / dex_name
-            r = subprocess.run(
-                ["java", "-jar", str(smali_jar), "a", str(smali_dir), "-o", str(dex_out)],
-                capture_output=True, text=True, timeout=300,
-            )
-            all_stderr.append(r.stderr[-300:])
-            if r.returncode != 0 or not dex_out.is_file():
-                return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
-                        "restore_in_place": False, "permission": None,
-                        "stdout": "", "stderr": "\n".join(all_stderr),
-                        "error": f"smali compile failed for {smali_dir.name}: rc={r.returncode}"}
-            compiled.append((dex_out, dex_name))
+            cmd = ["java", "-jar", str(smali_jar), "a", str(smali_dir), "-o", str(dex_out)]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            ok = r.returncode == 0 and dex_out.is_file()
+            compile_results[smali_dir] = {
+                "ok": ok,
+                "dex_path": dex_out if ok else None,
+                "dex_name": dex_name,
+                "cmd": cmd,
+                "rc": r.returncode,
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "is_changed": smali_dir in changed_smali_folders,
+            }
 
-        replace_names = {n for _, n in compiled}
+        all_ok = all(r["ok"] for r in compile_results.values())
+
+        if not all_ok:
+            # Check if any CHANGED folder failed
+            changed_failures = [
+                r for sd, r in compile_results.items()
+                if not r["ok"] and r["is_changed"]
+            ]
+            if changed_failures:
+                f = changed_failures[0]
+                stderr_lines = f["stderr"].splitlines()[:50]
+                classes_in_folder = [
+                    cls for cls in classes_to_find
+                    if any(p.name == f"{cls}.smali"
+                           for sd, _ in compile_results.items()
+                           if sd in changed_smali_folders
+                           for p in sd.rglob(f"{cls}.smali"))
+                ]
+                return {
+                    "ok": False, "rebuilt_path": None, "restored_path": None,
+                    "restore_in_place": False, "permission": None,
+                    "smali_compile_tool": str(smali_jar),
+                    "smali_compile_commands": [" ".join(str(x) for x in f["cmd"])],
+                    "smali_compile_stdout": f["stdout"][-1000:],
+                    "smali_compile_stderr": "\n".join(stderr_lines),
+                    "changed_smali_folders": [str(sd) for sd in changed_smali_folders],
+                    "changed_classes_in_failed_folder": classes_in_folder,
+                    "dex_files_rebuilt": [], "dex_entries_replaced": [],
+                    "stdout": f["stdout"][-500:], "stderr": f["stderr"][-500:],
+                    "error": (
+                        f"smali compile failed for changed folder {f['dex_name']}: rc={f['rc']}\n"
+                        f"First 50 error lines:\n" + "\n".join(stderr_lines[:50])
+                    ),
+                }
+
+            # Only non-changed folders failed — use only successfully compiled changed folders
+            compiled = [
+                (r["dex_path"], r["dex_name"])
+                for sd, r in compile_results.items()
+                if r["ok"] and r["is_changed"]
+            ]
+        else:
+            compiled = [
+                (r["dex_path"], r["dex_name"])
+                for r in compile_results.values()
+                if r["ok"]
+            ]
+
+        if not compiled:
+            return {
+                "ok": False, "rebuilt_path": None, "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "smali_compile_tool": str(smali_jar),
+                "changed_smali_folders": [str(sd) for sd in changed_smali_folders],
+                "dex_files_rebuilt": [], "dex_entries_replaced": [],
+                "stdout": "", "stderr": "",
+                "error": "No smali dirs produced compilable output",
+            }
+
+        # Repack: copy ALL from original, replace only compiled DEX entries
+        replace_names = {dex_name for _, dex_name in compiled}
         with _zf.ZipFile(str(original_apk), "r") as orig_zf:
             with _zf.ZipFile(str(tmp_out), "w") as new_zf:
                 for info in orig_zf.infolist():
@@ -626,26 +753,58 @@ def _rebuild_miuisystemui_smali_only(
                     new_zf.write(str(dex_path), dex_name, compress_type=_zf.ZIP_STORED)
 
         if not tmp_out.is_file():
-            return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
-                    "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
-                    "error": "repack did not produce output APK"}
+            return {
+                "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "smali_compile_tool": str(smali_jar),
+                "changed_smali_folders": [str(sd) for sd in changed_smali_folders],
+                "dex_files_rebuilt": list(replace_names), "dex_entries_replaced": [],
+                "stdout": "", "stderr": "",
+                "error": "repack did not produce output APK",
+            }
+
+        # Validate: confirm DEX entries exist in repacked APK
+        with _zf.ZipFile(str(tmp_out), "r") as check_zf:
+            repacked_entries = set(check_zf.namelist())
+        missing_dex = [n for n in replace_names if n not in repacked_entries]
+        if missing_dex:
+            tmp_out.unlink(missing_ok=True)
+            return {
+                "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "smali_compile_tool": str(smali_jar),
+                "changed_smali_folders": [str(sd) for sd in changed_smali_folders],
+                "dex_files_rebuilt": list(replace_names),
+                "dex_entries_replaced": [],
+                "stdout": "", "stderr": "",
+                "error": f"DEX entries missing from repacked APK: {missing_dex}",
+            }
 
         restore = _restore_via_move(tmp_out, original_apk)
         return {
-            "ok":             restore["restored"],
-            "rebuilt_path":   restore.get("rebuilt_path"),
-            "restored_path":  restore.get("restored_path"),
+            "ok": restore["restored"],
+            "rebuilt_path": restore.get("rebuilt_path"),
+            "restored_path": restore.get("restored_path"),
             "restore_in_place": restore["restored"],
-            "permission":     restore.get("permission"),
-            "stdout":         "",
-            "stderr":         "\n".join(all_stderr),
-            "error":          restore.get("error"),
+            "permission": restore.get("permission"),
+            "smali_compile_tool": str(smali_jar),
+            "changed_smali_folders": [str(sd) for sd in changed_smali_folders],
+            "dex_files_rebuilt": [dex_name for _, dex_name in compiled],
+            "dex_entries_replaced": list(replace_names),
+            "stdout": "",
+            "stderr": "",
+            "error": restore.get("error"),
         }
     except Exception as exc:
         tmp_out.unlink(missing_ok=True)
-        return {"ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
-                "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
-                "error": str(exc)}
+        return {
+            "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+            "restore_in_place": False, "permission": None,
+            "smali_compile_tool": str(smali_jar),
+            "changed_smali_folders": [str(sd) for sd in changed_smali_folders],
+            "dex_files_rebuilt": [], "dex_entries_replaced": [],
+            "stdout": "", "stderr": "", "error": str(exc),
+        }
     finally:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -890,8 +1049,11 @@ def _detect_rom_region(work_dir: Path) -> str:
     return os.environ.get("DZ_ROM_REGION", "")
 
 
-def _patch_sysui_in_dir(sysui_dir: Path, report: list) -> None:
-    """Patch MiuiSystemUI smali: insert const/4 vX, 0x1 below IS_INTERNATIONAL_BUILD sget."""
+def _patch_sysui_in_dir(sysui_dir: Path, report: list) -> list[str]:
+    """Patch MiuiSystemUI smali: insert const/4 vX, 0x1 below IS_INTERNATIONAL_BUILD sget.
+
+    Returns list of class names that were actually changed (for smali rebuild targeting).
+    """
     smali_dirs = _collect_smali_dirs(sysui_dir)
     if not smali_dirs:
         report.append(_sysui_entry(
@@ -899,8 +1061,9 @@ def _patch_sysui_in_dir(sysui_dir: Path, report: list) -> None:
             found=True, status="skipped",
             detail="No smali dirs found in MiuiSystemUI unpacked dir",
         ))
-        return
+        return []
 
+    changed_classes: list[str] = []
     for cls in _SYSUI_TARGET_CLASSES:
         path = _find_smali_class(smali_dirs, cls)
         if not path:
@@ -912,13 +1075,22 @@ def _patch_sysui_in_dir(sysui_dir: Path, report: list) -> None:
             continue
         try:
             content = path.read_text(encoding="utf-8", errors="ignore")
-            new_content, insertions = _insert_const_below_sget(content, _INTL_FLAG)
+            new_content, insertions, skipped_unsafe = _insert_const_below_sget(content, _INTL_FLAG)
             if insertions:
                 path.write_text(new_content, encoding="utf-8")
+                changed_classes.append(cls)
                 report.append(_sysui_entry(
                     cls, str(path), found=True, status="changed",
                     const_insertions=insertions,
-                    detail=f"{cls}: {insertions} const/4 inserted (same register)",
+                    skipped_unsafe_try=skipped_unsafe,
+                    detail=f"{cls}: {insertions} const/4 inserted (same register)"
+                           + (f", {skipped_unsafe} skipped (unsafe try range)" if skipped_unsafe else ""),
+                ))
+            elif skipped_unsafe:
+                report.append(_sysui_entry(
+                    cls, str(path), found=True, status="skipped",
+                    skipped_unsafe_try=skipped_unsafe,
+                    detail=f"{cls}: all insertions skipped — SKIPPED_UNSAFE_TRY_RANGE",
                 ))
             else:
                 report.append(_sysui_entry(
@@ -927,6 +1099,7 @@ def _patch_sysui_in_dir(sysui_dir: Path, report: list) -> None:
                 ))
         except Exception as exc:
             report.append(_sysui_entry(cls, str(path), found=True, status="failed", error=str(exc)))
+    return changed_classes
 
 
 def apply_miuisystemui_volte_cn_patch(
@@ -982,30 +1155,46 @@ def apply_miuisystemui_volte_cn_patch(
         return
 
     try:
-        _patch_sysui_in_dir(unpacked, report)
+        changed_classes = _patch_sysui_in_dir(unpacked, report)
         if we_decompiled and apk_path:
             rr = _rebuild_and_restore(unpacked, apk_path, "MiuiSystemUI.apk")
             if not rr["ok"]:
-                # apktool/aapt2 rebuild failed — smali-only fallback (no resource recompile)
-                smali_rr = _rebuild_miuisystemui_smali_only(unpacked, apk_path, "MiuiSystemUI.apk")
+                # apktool/aapt2 rebuild failed — smali-only fallback (DEX-only replace)
+                smali_rr = _rebuild_miuisystemui_smali_only(
+                    unpacked, apk_path, "MiuiSystemUI.apk",
+                    target_classes=changed_classes or list(_SYSUI_TARGET_CLASSES),
+                )
                 if smali_rr["ok"]:
                     report.append(_sysui_entry(
                         "MiuiSystemUI", str(apk_path), found=True, status="changed",
-                        detail=f"MiuiSystemUI.apk patched+restored via smali-zip fallback (apktool/aapt2 failed, os={os_det})",
+                        detail=(
+                            f"MiuiSystemUI.apk patched+restored via smali-zip fallback "
+                            f"(apktool/aapt2 failed, os={os_det})"
+                        ),
                         original_path=str(apk_path),
                         rebuilt_path=smali_rr.get("rebuilt_path"),
                         restored_path=smali_rr.get("restored_path"),
                         restore_in_place=True,
                         permission=smali_rr.get("permission"),
                         os_detection=os_det,
+                        changed_smali_classes=changed_classes,
+                        changed_smali_folders=smali_rr.get("changed_smali_folders"),
+                        dex_files_rebuilt=smali_rr.get("dex_files_rebuilt"),
+                        dex_entries_replaced=smali_rr.get("dex_entries_replaced"),
+                        smali_compile_tool=smali_rr.get("smali_compile_tool"),
                     ))
                 else:
                     report.append(_sysui_entry(
                         "MiuiSystemUI", str(apk_path), found=True, status="failed_optional",
                         error=f"apktool: {rr['error']} | smali-zip: {smali_rr['error']}",
                         original_path=str(apk_path),
-                        rebuilt_path=rr["rebuilt_path"],
+                        rebuilt_path=rr.get("rebuilt_path"),
                         os_detection=os_det,
+                        changed_smali_classes=changed_classes,
+                        changed_smali_folders=smali_rr.get("changed_smali_folders"),
+                        smali_compile_tool=smali_rr.get("smali_compile_tool"),
+                        smali_compile_commands=smali_rr.get("smali_compile_commands"),
+                        smali_compile_stderr=smali_rr.get("smali_compile_stderr"),
                     ))
             else:
                 report.append(_sysui_entry(
@@ -1017,6 +1206,7 @@ def apply_miuisystemui_volte_cn_patch(
                     restore_in_place=True,
                     permission=rr["permission"],
                     os_detection=os_det,
+                    changed_smali_classes=changed_classes,
                 ))
     finally:
         if we_decompiled:
@@ -1092,7 +1282,7 @@ def _patch_powerkeeper_in_dir(pk_dir: Path, report: list) -> None:
             # ── Patch B: MilletConfig — insert const/4 below IS_MIUI ──────────
             milletconfig_insertions = 0
             if cls == "MilletConfig":
-                new_content, milletconfig_insertions = _insert_const_below_sget(
+                new_content, milletconfig_insertions, _ = _insert_const_below_sget(
                     new_content, _MIUI_FLAG
                 )
 
