@@ -1324,21 +1324,45 @@ def _decompile_framework_jars(work_dir: Path) -> dict[str, dict]:
 
 
 def _rebuild_framework_jars(decompile_outcomes: dict[str, dict]) -> None:
-    """Rebuild and restore JARs for any entry where *decompiled* is True."""
+    """Rebuild and restore JARs for any entry where *decompiled* is True.
+
+    Builds to a temp file first, then uses restore_patched_file_in_place() so
+    the original JAR is never touched unless the rebuild succeeds.
+    """
     if _rph is None:
         return
+
+    import tempfile as _tf
 
     for name, info in decompile_outcomes.items():
         if not info["decompiled"]:
             continue
         unpacked_dir = Path(info["unpacked_dir"])
         jar_path     = Path(info["jar_path"])
+        expected     = jar_path.name
 
-        rebuild = _rph.rebuild_apk(unpacked_dir, jar_path)
+        tmp_jar = Path(_tf.mktemp(suffix=f"_{expected}", dir=str(jar_path.parent)))
+        rebuild = _rph.rebuild_apk(unpacked_dir, tmp_jar)
+
         if rebuild["ok"]:
-            print(f"[DeadZone] Rebuilt {jar_path.name} successfully.")
+            restore = _rph.restore_patched_file_in_place(tmp_jar, jar_path, expected)
+            info["rebuild_ok"]      = True
+            info["restore_ok"]      = restore["restored"]
+            info["restored_path"]   = restore["restored_path"]
+            info["restore_in_place"] = restore["restored"]
+            info["permission"]      = restore.get("permission")
+            info["restore_error"]   = restore.get("error")
+            if restore["restored"]:
+                print(f"[DeadZone] Rebuilt+restored {expected} → {restore['restored_path']}")
+            else:
+                print(f"[DeadZone] WARN: rebuild OK but restore failed for {expected}: {restore['error']}")
         else:
-            print(f"[DeadZone] WARN: rebuild failed for {jar_path.name}: {rebuild['reason']}")
+            tmp_jar.unlink(missing_ok=True)
+            info["rebuild_ok"]       = False
+            info["restore_ok"]       = False
+            info["restore_in_place"] = False
+            info["restore_error"]    = rebuild["reason"]
+            print(f"[DeadZone] WARN: rebuild failed for {expected}: {rebuild['reason']}")
 
         shutil.rmtree(unpacked_dir, ignore_errors=True)
 
@@ -1424,14 +1448,22 @@ def _write_reports(report: dict) -> None:
     # Decompile info
     decompile_info = report.get("decompile_info", {})
     if decompile_info:
-        lines += ["[JAR DECOMPILE]"]
+        lines += ["[JAR DECOMPILE / REBUILD / RESTORE]"]
         for name, info in decompile_info.items():
-            ok_tag = "OK" if info.get("decompiled") else "SKIP"
-            jar    = info.get("jar_path") or "(not found)"
-            reason = info.get("reason") or ""
+            ok_tag     = "OK  " if info.get("decompiled") else "SKIP"
+            jar        = info.get("jar_path") or "(not found)"
+            reason     = info.get("reason") or ""
+            restore_ok = info.get("restore_in_place", False)
+            restored   = info.get("restored_path") or ""
+            r_err      = info.get("restore_error") or ""
             lines.append(f"  [{ok_tag}] {name}: {jar}")
             if reason:
                 lines.append(f"       Reason: {reason}")
+            if info.get("decompiled"):
+                r_tag = "OK  " if restore_ok else "FAIL"
+                lines.append(f"       Restore [{r_tag}]: {restored or '(not restored)'}")
+                if r_err:
+                    lines.append(f"       Restore error: {r_err}")
             for sp in info.get("searched_paths", []):
                 lines.append(f"       Searched: {sp}")
         lines.append("")

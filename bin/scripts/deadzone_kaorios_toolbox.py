@@ -1051,9 +1051,20 @@ def process_framework_jar(run: KaoriosRun, apktool: Path, java: str) -> bool:
         _rebuild(decompile_dir, patched_jar, apktool, java)
         run.framework_rebuild_ok = True
 
-        # 4. Replace original with rebuilt jar
-        shutil.copy2(patched_jar, jar_path)
-        patched_jar.unlink(missing_ok=True)
+        # 4. Restore in place (move rebuilt → original path)
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import rom_patch_helpers as _rph_k
+            restore = _rph_k.restore_patched_file_in_place(patched_jar, jar_path, jar_path.name)
+            if restore["restored"]:
+                _log(f"Restored {jar_path.name} → {restore['restored_path']} ({restore['permission']})")
+            else:
+                _err(f"Restore failed for {jar_path.name}: {restore['error']}")
+                shutil.copy2(patched_jar, jar_path)
+                patched_jar.unlink(missing_ok=True)
+        except Exception:
+            shutil.copy2(patched_jar, jar_path)
+            patched_jar.unlink(missing_ok=True)
         _log(f"Replaced {jar_path.name} with patched version")
 
     except Exception as exc:
@@ -1107,8 +1118,20 @@ def process_services_jar(run: KaoriosRun, apktool: Path, java: str) -> bool:
         run.services_hook_note = hr.note
 
         _rebuild(decompile_dir, patched_jar, apktool, java)
-        shutil.copy2(patched_jar, jar_path)
-        patched_jar.unlink(missing_ok=True)
+        # Restore in place
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import rom_patch_helpers as _rph_k
+            restore = _rph_k.restore_patched_file_in_place(patched_jar, jar_path, jar_path.name)
+            if restore["restored"]:
+                _log(f"Restored {jar_path.name} → {restore['restored_path']} ({restore['permission']})")
+            else:
+                _err(f"Restore failed for {jar_path.name}: {restore['error']}")
+                shutil.copy2(patched_jar, jar_path)
+                patched_jar.unlink(missing_ok=True)
+        except Exception:
+            shutil.copy2(patched_jar, jar_path)
+            patched_jar.unlink(missing_ok=True)
         _log(f"Replaced {jar_path.name} with patched version")
 
     except Exception as exc:

@@ -114,6 +114,11 @@ def _prov_entry(
     detail: str = "",
     error: Optional[str] = None,
     searched_paths: Optional[list] = None,
+    original_path: Optional[str] = None,
+    rebuilt_path: Optional[str] = None,
+    restored_path: Optional[str] = None,
+    restore_in_place: bool = False,
+    permission: Optional[str] = None,
 ) -> dict:
     return {
         "patch_name": "provision_mezo_strings",
@@ -123,6 +128,11 @@ def _prov_entry(
         "detail": detail,
         "error": error,
         "searched_paths": searched_paths or [],
+        "original_path": original_path,
+        "rebuilt_path": rebuilt_path,
+        "restored_path": restored_path,
+        "restore_in_place": restore_in_place,
+        "permission": permission,
     }
 
 
@@ -135,6 +145,12 @@ def _sysui_entry(
     const_insertions: int = 0,
     detail: str = "",
     error: Optional[str] = None,
+    original_path: Optional[str] = None,
+    rebuilt_path: Optional[str] = None,
+    restored_path: Optional[str] = None,
+    restore_in_place: bool = False,
+    permission: Optional[str] = None,
+    os_detection: Optional[str] = None,
 ) -> dict:
     return {
         "patch_name": "miuisystemui_volte_cn",
@@ -145,6 +161,12 @@ def _sysui_entry(
         "const_insertions_count": const_insertions,
         "detail": detail,
         "error": error,
+        "original_path": original_path,
+        "rebuilt_path": rebuilt_path,
+        "restored_path": restored_path,
+        "restore_in_place": restore_in_place,
+        "permission": permission,
+        "os_detection": os_detection,
     }
 
 
@@ -160,6 +182,11 @@ def _pk_entry(
     skipped_reason: str = "",
     detail: str = "",
     error: Optional[str] = None,
+    original_path: Optional[str] = None,
+    rebuilt_path: Optional[str] = None,
+    restored_path: Optional[str] = None,
+    restore_in_place: bool = False,
+    permission: Optional[str] = None,
 ) -> dict:
     return {
         "patch_name": "powerkeeper_cn_global_patches",
@@ -174,6 +201,11 @@ def _pk_entry(
         "skipped_reason": skipped_reason,
         "detail": detail,
         "error": error,
+        "original_path": original_path,
+        "rebuilt_path": rebuilt_path,
+        "restored_path": restored_path,
+        "restore_in_place": restore_in_place,
+        "permission": permission,
     }
 
 
@@ -330,6 +362,78 @@ def _get_or_decompile(
     return None, False, None, []
 
 
+def _rebuild_and_restore(
+    unpacked_dir: Path,
+    original_apk: Path,
+    expected_name: str,
+) -> dict:
+    """Rebuild APK to a temp file then restore in place via rom_patch_helpers.
+
+    Returns {ok, rebuilt_path, restored_path, restore_in_place, permission, stdout, stderr, error}.
+    The original file is never touched unless rebuild succeeds.
+    """
+    import shutil as _sh
+    tmp_out = Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(unpacked_dir.parent)))
+    try:
+        ok, stdout, stderr = _recompile_apk(unpacked_dir, tmp_out)
+        if not ok:
+            tmp_out.unlink(missing_ok=True)
+            return {
+                "ok": False,
+                "rebuilt_path": str(tmp_out),
+                "restored_path": None,
+                "restore_in_place": False,
+                "permission": None,
+                "stdout": stdout,
+                "stderr": stderr,
+                "error": f"rebuild failed — stdout={stdout[-300:]} stderr={stderr[-300:]}",
+            }
+
+        # Restore in place
+        if _rph is not None:
+            restore = _rph.restore_patched_file_in_place(tmp_out, original_apk, expected_name)
+        else:
+            try:
+                if original_apk.exists():
+                    original_apk.unlink()
+                _sh.move(str(tmp_out), str(original_apk))
+                try:
+                    original_apk.chmod(0o644)
+                    perm = "0644"
+                except Exception:
+                    perm = "0644 (chmod failed)"
+                restore = {
+                    "restored": True, "restored_path": str(original_apk),
+                    "rebuilt_path": str(tmp_out), "permission": perm, "error": None,
+                }
+            except Exception as exc:
+                restore = {
+                    "restored": False, "restored_path": None,
+                    "rebuilt_path": str(tmp_out), "permission": None, "error": str(exc),
+                }
+
+        return {
+            "ok": restore["restored"],
+            "rebuilt_path": restore.get("rebuilt_path", str(tmp_out)),
+            "restored_path": restore.get("restored_path"),
+            "restore_in_place": restore["restored"],
+            "permission": restore.get("permission"),
+            "stdout": stdout,
+            "stderr": stderr,
+            "error": restore.get("error"),
+        }
+    except Exception as exc:
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {
+            "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+            "restore_in_place": False, "permission": None,
+            "stdout": "", "stderr": "", "error": str(exc),
+        }
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PART 1 — Provision.apk strings patch
 # ══════════════════════════════════════════════════════════════════════════════
@@ -467,18 +571,25 @@ def apply_provision_strings(work_dir: Path, report: list) -> None:
     try:
         _patch_provision_strings_in_dir(unpacked, report)
         if we_decompiled and apk_path:
-            ok, stdout, stderr = _recompile_apk(unpacked, apk_path)
-            if not ok:
-                apktool = _find_apktool()
+            rr = _rebuild_and_restore(unpacked, apk_path, "Provision.apk")
+            if not rr["ok"]:
                 report.append(_prov_entry(
                     str(apk_path), found=True, status="failed_optional",
-                    error=(
-                        f"Provision strings rebuild failed — patched strings.xml not written back to APK. "
-                        f"tool={apktool}  "
-                        f"stdout={stdout[-500:] if stdout else '(empty)'}  "
-                        f"stderr={stderr[-500:] if stderr else '(empty)'}"
-                    ),
+                    error=rr["error"],
                     searched_paths=searched,
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                ))
+            else:
+                report.append(_prov_entry(
+                    str(apk_path), found=True, status="changed",
+                    detail="Provision.apk patched and restored in place",
+                    searched_paths=searched,
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                    restored_path=rr["restored_path"],
+                    restore_in_place=True,
+                    permission=rr["permission"],
                 ))
     finally:
         if we_decompiled:
@@ -585,21 +696,27 @@ def apply_miuisystemui_volte_cn_patch(
     if rom_region is None:
         rom_region = _detect_rom_region(work_dir)
 
-    if rom_os not in ("OS2", "OS3"):
+    # Skip only when OS or region is KNOWN and does not match — unknown means attempt patch
+    if rom_os and rom_os not in ("OS2", "OS3"):
         report.append(_sysui_entry(
             "MiuiSystemUI", str(work_dir),
             found=False, status="skipped",
             detail=f"ROM OS is {rom_os!r} — patch applies only to OS2/OS3 — SKIPPED",
+            os_detection=rom_os,
         ))
         return
 
-    if rom_region != "CN":
+    if rom_region and rom_region not in ("CN",):
         report.append(_sysui_entry(
             "MiuiSystemUI", str(work_dir),
             found=False, status="skipped",
             detail=f"ROM region is {rom_region!r} — patch applies only to CN — SKIPPED",
+            os_detection=rom_os or "unknown",
         ))
         return
+
+    # Record detection state for the report
+    os_det = rom_os if rom_os else "unknown"
 
     unpacked, we_decompiled, apk_path, searched = _get_or_decompile(
         work_dir, "miuisystemui_unpacked",
@@ -611,17 +728,32 @@ def apply_miuisystemui_volte_cn_patch(
             "MiuiSystemUI", str(work_dir),
             found=False, status="skipped_not_found",
             detail="MiuiSystemUI.apk not found and no miuisystemui_unpacked dir — SKIPPED_NOT_FOUND",
+            os_detection=os_det,
         ))
         return
 
     try:
         _patch_sysui_in_dir(unpacked, report)
         if we_decompiled and apk_path:
-            ok, stdout, stderr = _recompile_apk(unpacked, apk_path)
-            if not ok:
+            rr = _rebuild_and_restore(unpacked, apk_path, "MiuiSystemUI.apk")
+            if not rr["ok"]:
                 report.append(_sysui_entry(
                     "MiuiSystemUI", str(apk_path), found=True, status="failed_optional",
-                    error=f"rebuild failed: stdout={stdout[-300:]} stderr={stderr[-300:]}",
+                    error=rr["error"],
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                    os_detection=os_det,
+                ))
+            else:
+                report.append(_sysui_entry(
+                    "MiuiSystemUI", str(apk_path), found=True, status="changed",
+                    detail=f"MiuiSystemUI.apk patched and restored in place (os={os_det})",
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                    restored_path=rr["restored_path"],
+                    restore_in_place=True,
+                    permission=rr["permission"],
+                    os_detection=os_det,
                 ))
     finally:
         if we_decompiled:
@@ -779,11 +911,23 @@ def apply_powerkeeper_cn_global_patches(work_dir: Path, report: list) -> None:
     try:
         _patch_powerkeeper_in_dir(unpacked, report)
         if we_decompiled and apk_path:
-            ok, stdout, stderr = _recompile_apk(unpacked, apk_path)
-            if not ok:
+            rr = _rebuild_and_restore(unpacked, apk_path, "PowerKeeper.apk")
+            if not rr["ok"]:
                 report.append(_pk_entry(
                     "PowerKeeper", str(apk_path), found=True, status="failed_optional",
-                    error=f"rebuild failed: stdout={stdout[-300:]} stderr={stderr[-300:]}",
+                    error=rr["error"],
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                ))
+            else:
+                report.append(_pk_entry(
+                    "PowerKeeper", str(apk_path), found=True, status="changed",
+                    detail="PowerKeeper.apk patched and restored in place",
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                    restored_path=rr["restored_path"],
+                    restore_in_place=True,
+                    permission=rr["permission"],
                 ))
     finally:
         if we_decompiled:

@@ -480,6 +480,105 @@ def restore_file(src: Path, dst: Path) -> dict:
         return {"ok": False, "src": str(src), "dst": str(dst), "reason": str(exc)}
 
 
+def restore_patched_file_in_place(
+    rebuilt_path: Path,
+    original_path: Path,
+    expected_name: str,
+) -> dict:
+    """Replace *original_path* with *rebuilt_path* using atomic-ish move.
+
+    Enforces that the restored file has *expected_name* as filename.
+    Applies chmod 0644 after restore.
+
+    Rules:
+    - *rebuilt_path* must exist; fails immediately otherwise.
+    - If *rebuilt_path*.name != *expected_name*, renames the rebuilt file first.
+    - Creates *original_path*.parent if necessary.
+    - Unlinks the original then moves the rebuilt file in its place.
+    - If the move fails the original is gone but rebuilt file remains at rebuilt_path.
+    - Does NOT delete the temporary decompile directory — caller is responsible.
+
+    Returns dict with keys:
+      original_path  : str
+      rebuilt_path   : str
+      restored_path  : str | None
+      expected_name  : str
+      restored       : bool
+      permission     : str | None
+      error          : str | None
+      cleanup_done   : bool   (True when rebuilt_path was consumed by the move)
+    """
+    import shutil as _sh
+
+    result: dict = {
+        "original_path":  str(original_path),
+        "rebuilt_path":   str(rebuilt_path),
+        "restored_path":  None,
+        "expected_name":  expected_name,
+        "restored":       False,
+        "permission":     None,
+        "error":          None,
+        "cleanup_done":   False,
+    }
+
+    # 1. rebuilt_path must exist
+    if not rebuilt_path.is_file():
+        result["error"] = f"rebuilt file not found: {rebuilt_path}"
+        return result
+
+    # 2. Rename to expected_name if name mismatch
+    if rebuilt_path.name != expected_name:
+        renamed = rebuilt_path.parent / expected_name
+        try:
+            if renamed.exists():
+                renamed.unlink()
+            rebuilt_path.rename(renamed)
+            result["rebuilt_path"] = str(renamed)
+            rebuilt_path = renamed
+        except Exception as exc:
+            result["error"] = f"rename {rebuilt_path.name!r} → {expected_name!r} failed: {exc}"
+            return result
+
+    # 3. Ensure destination parent exists
+    dest_parent = original_path.parent
+    try:
+        dest_parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        result["error"] = f"cannot create destination parent {dest_parent}: {exc}"
+        return result
+
+    # 4. Unlink original, move rebuilt in its place
+    # Edge-case: if the rename in step 2 already placed rebuilt_path at original_path
+    # (happens when temp file is in the same directory), the file is already in place.
+    try:
+        already_in_place = rebuilt_path.resolve() == original_path.resolve()
+    except Exception:
+        already_in_place = False
+
+    if already_in_place:
+        result["cleanup_done"] = True
+    else:
+        try:
+            if original_path.exists():
+                original_path.unlink()
+            _sh.move(str(rebuilt_path), str(original_path))
+            result["cleanup_done"] = True
+        except Exception as exc:
+            result["error"] = f"restore move failed: {exc}"
+            return result
+
+    # 5. chmod 0644
+    try:
+        original_path.chmod(0o644)
+        result["permission"] = "0644"
+    except Exception as exc:
+        result["permission"] = f"0644 (chmod failed: {exc})"
+
+    result["restored"]      = True
+    result["restored_path"] = str(original_path)
+    return result
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 7. Generic text-file patcher
 # ══════════════════════════════════════════════════════════════════════════════

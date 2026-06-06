@@ -168,6 +168,14 @@ def _format_txt(
 
             lines.append(f"  {mark} {mod_id or target} — {summary}")
 
+            # Restore-in-place fields
+            rip = r.get("restore_in_place")
+            if rip is not None:
+                rip_tag = "YES" if rip else "NO "
+                restored = r.get("restored_path") or r.get("rebuilt_path") or ""
+                perm = r.get("permission") or ""
+                lines.append(f"    restore_in_place={rip_tag}  path={restored}  perm={perm}")
+
             # Show searched paths for missing/not-found entries
             if searched and status in ("skipped_not_found", "failed_optional", "failed"):
                 lines.append(f"    Searched paths ({len(searched)}):")
