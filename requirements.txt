@@ -1,2 +1,1 @@
-pyTelegramBotAPI
-requests
+pytest>=7.0

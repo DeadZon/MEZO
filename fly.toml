@@ -1,9 +1,0 @@
-app = 'mezo-bot'
-primary_region = 'cdg'
-
-[build]
-
-[[vm]]
-  cpu_kind = 'shared'
-  cpus = 2
-  memory_mb = 1024
