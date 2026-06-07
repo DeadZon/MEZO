@@ -60,6 +60,23 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_MTK_API_TOKEN }}
 
+      - name: Log build configuration
+        run: |
+          echo "============================================"
+          echo "  MEZO Fly MTK Build"
+          echo "  App       : mezo-mtk-builder"
+          echo "  Region    : fra"
+          echo "  Volume    : mezo_mtk_data"
+          echo "  VM CPUs   : ${{ inputs.VM_CPUS }}"
+          echo "  VM Memory : ${{ inputs.VM_MEMORY }} MB"
+          echo "  Style     : ${{ inputs.style }}"
+          echo "  Mode      : ${{ inputs.mode }}"
+          echo "  PixelDrain: ${{ inputs.upload_pixeldrain }}"
+          echo "  Telegram  : ${{ inputs.notify_telegram }}"
+          echo "  Oversized : ${{ inputs.allow_oversized_final }}"
+          echo "  Run URL   : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "============================================"
+
       - name: Build Docker image and launch Fly machine
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_MTK_API_TOKEN }}
@@ -80,14 +97,16 @@ jobs:
             --env "NOTIFY_TELEGRAM=${{ inputs.notify_telegram }}" \
             --env "ALLOW_OVERSIZED_FINAL=${{ inputs.allow_oversized_final }}" \
             --env "PIXELDRAIN_API_KEY=${{ secrets.PIXELDRAIN_API_KEY }}" \
-            --env "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
-            --env "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --env "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}" \
+            --env "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_MTK_CHAT_ID }}" \
+            --env "TELEGRAM_MTK_BOT_TOKEN=${{ secrets.TELEGRAM_MTK_BOT_TOKEN }}" \
             --env "TELEGRAM_MTK_CHAT_ID=${{ secrets.TELEGRAM_MTK_CHAT_ID }}" \
-            --env "TELEGRAM_SNAPDRAGON_CHAT_ID=${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}" \
             --env "GITHUB_REPOSITORY=${{ github.repository }}" \
             --env "GITHUB_RUN_ID=${{ github.run_id }}" \
             --env "GITHUB_RUN_NUMBER=${{ github.run_number }}" \
             --env "GITHUB_ACTOR=${{ github.actor }}" \
             --env "GITHUB_REF_NAME=${{ github.ref_name }}" \
             --env "GITHUB_SHA=${{ github.sha }}" \
+            --env "GITHUB_SERVER_URL=${{ github.server_url }}" \
+            --env "GITHUB_WORKFLOW=MEZO Fly MTK" \
             --rm

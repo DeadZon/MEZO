@@ -7,6 +7,18 @@ set -euo pipefail
 # ── Working directory ─────────────────────────────────────────────────────────
 cd /app
 
+# ── GitHub context helpers ────────────────────────────────────────────────────
+# Export GITHUB_WORKFLOW so telegram.py _github_ctx() shows the right label.
+export GITHUB_WORKFLOW="${GITHUB_WORKFLOW:-MEZO Fly ${SOC:-mtk}}"
+# Export GITHUB_SERVER_URL so telegram.py builds a correct run URL.
+export GITHUB_SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
+
+# Compute the run URL for display (no secrets — only public repo/run metadata).
+GITHUB_RUN_URL=""
+if [ -n "${GITHUB_REPOSITORY:-}" ] && [ -n "${GITHUB_RUN_ID:-}" ]; then
+    GITHUB_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+fi
+
 # ── Build info (no secrets printed) ──────────────────────────────────────────
 echo "=========================================="
 echo "  MEZO ROM Builder — Fly.io"
@@ -19,6 +31,7 @@ echo "  ROM_URL   : ${ROM_URL:+[SET]}"
 echo "  PIXELDRAIN: ${UPLOAD_PIXELDRAIN:-false}"
 echo "  TELEGRAM  : ${NOTIFY_TELEGRAM:-false}"
 echo "  OVERSIZED : ${ALLOW_OVERSIZED_FINAL:-false}"
+echo "  RUN URL   : ${GITHUB_RUN_URL:-N/A}"
 echo "=========================================="
 
 # ── Validate required inputs ──────────────────────────────────────────────────
@@ -36,6 +49,39 @@ if [ "$(id -u)" -eq 0 ]; then
 else
     SUDO="sudo -E"
 fi
+
+# ── Exit trap — catch unexpected failures before pipeline error handling ──────
+_NOTIFIED=0
+_on_exit() {
+    local code=$?
+    if [ "$code" -ne 0 ] && [ "$_NOTIFIED" -eq 0 ] \
+        && [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
+        echo "[TRAP] Unexpected exit (code $code) — sending failure notification..." >&2
+        $SUDO python3 bin/scripts/telegram.py finish FAIL \
+            --error "Unexpected container exit (code $code, line $(caller 2>/dev/null || echo unknown))" \
+            2>/dev/null || true
+    fi
+}
+trap '_on_exit' EXIT
+
+# ── Live-log watch helpers (mirrors GitHub Actions tg_watch.py usage) ─────────
+TG_WATCH_PID=""
+_start_watch() {
+    local logfile="$1" stage="$2"
+    if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
+        rm -f /tmp/tg_watch_stop
+        $SUDO python3 bin/scripts/tg_watch.py "$logfile" "$stage" &
+        TG_WATCH_PID=$!
+    fi
+}
+_stop_watch() {
+    if [ -n "${TG_WATCH_PID:-}" ]; then
+        touch /tmp/tg_watch_stop
+        sleep 3
+        $SUDO kill "$TG_WATCH_PID" 2>/dev/null || true
+        TG_WATCH_PID=""
+    fi
+}
 
 # ── Swap setup on persistent Fly volume ───────────────────────────────────────
 echo "[SWAP] Setting up swap on /mnt/mezo_data..."
@@ -72,7 +118,7 @@ OVERALL_EXIT=0
 
 # ── Telegram: build started ───────────────────────────────────────────────────
 if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
-    $SUDO python3 bin/scripts/telegram.py start "${SOC:-mtk}" 2>/dev/null || true
+    $SUDO python3 bin/scripts/telegram.py start "${TG_SOC}" 2>/dev/null || true
 fi
 
 # ── Step 1: setup.sh ─────────────────────────────────────────────────────────
@@ -100,12 +146,15 @@ if [ "$OVERALL_EXIT" -eq 0 ]; then
 
     if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
         $SUDO python3 bin/scripts/telegram.py update unpack RUN 2>/dev/null || true
+        _start_watch "$LOG_BUILD" unpack
     fi
 
     set +e
     $SUDO bash build.sh "${ROM_URL}" 2>&1 | tee "$LOG_BUILD"
     BUILD_EXIT=${PIPESTATUS[0]}
     set -e
+
+    _stop_watch
 
     if [ "$BUILD_EXIT" -ne 0 ]; then
         echo "[ERROR] build.sh failed (exit $BUILD_EXIT)" >&2
@@ -125,12 +174,15 @@ if [ "$OVERALL_EXIT" -eq 0 ]; then
 
     if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
         $SUDO python3 bin/scripts/telegram.py update rebuild RUN 2>/dev/null || true
+        _start_watch "$LOG_PACK" rebuild
     fi
 
     set +e
     $SUDO bash packROM.sh 2>&1 | tee "$LOG_PACK"
     PACK_EXIT=${PIPESTATUS[0]}
     set -e
+
+    _stop_watch
 
     if [ "$PACK_EXIT" -ne 0 ]; then
         echo "[ERROR] packROM.sh failed (exit $PACK_EXIT)" >&2
@@ -151,12 +203,15 @@ if [ "$OVERALL_EXIT" -eq 0 ]; then
 
     if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
         $SUDO python3 bin/scripts/telegram.py update zip RUN 2>/dev/null || true
+        _start_watch "$LOG_PKG" zip
     fi
 
     set +e
     $SUDO python3 bin/scripts/package_rom.py 2>&1 | tee "$LOG_PKG"
     PKG_EXIT=${PIPESTATUS[0]}
     set -e
+
+    _stop_watch
 
     if [ "$PKG_EXIT" -ne 0 ]; then
         echo "[ERROR] package_rom.py failed (exit $PKG_EXIT)" >&2
@@ -228,12 +283,21 @@ if [ "$OVERALL_EXIT" -eq 0 ] \
     fi
 fi
 
+# ── Generate full mod report ──────────────────────────────────────────────────
+echo ""
+echo "[REPORT] Generating full mod report..."
+$SUDO python3 bin/scripts/deadzone_full_mod_report.py \
+    --work-dir "$(pwd)" \
+    --style "${STYLE:-Plus}" 2>/dev/null || true
+
 # ── Final Telegram status ─────────────────────────────────────────────────────
 BUILD_END=$(date +%s)
 BUILD_DIFF=$((BUILD_END - BUILD_START))
 echo ""
 echo "=========================================="
 echo "  Build time : $((BUILD_DIFF / 60))m $((BUILD_DIFF % 60))s"
+
+_NOTIFIED=1  # Prevent exit trap from sending a duplicate notification
 
 if [ "$OVERALL_EXIT" -eq 0 ]; then
     echo "  Status     : SUCCESS"
@@ -247,20 +311,34 @@ if [ "$OVERALL_EXIT" -eq 0 ]; then
 else
     echo "  Status     : FAILED"
     echo "=========================================="
+
+    # Create debug ZIP for failure analysis
+    mkdir -p bin/output/reports bin/output/logs
+    $SUDO python3 bin/scripts/debug_zip.py 2>/dev/null || true
+
+    # Collect last useful error line from logs
     ERROR_TEXT=""
+    if [ -f bin/output/reports/package_error_report.txt ]; then
+        ERROR_TEXT=$(grep -m1 "^Reason:" bin/output/reports/package_error_report.txt \
+            | sed 's/^Reason:[[:space:]]*//' | head -c 200 || true)
+    fi
     for logf in /tmp/mezo_package.log /tmp/mezo_pack.log /tmp/mezo_build.log /tmp/mezo_setup.log; do
-        if [ -f "$logf" ]; then
-            ERR=$(grep -i "error\|failed\|invalid" "$logf" 2>/dev/null \
+        if [ -z "$ERROR_TEXT" ] && [ -f "$logf" ]; then
+            ERROR_TEXT=$(grep -i "error\|failed\|invalid" "$logf" 2>/dev/null \
                 | tail -n3 | tr '\n' ' ' | head -c 200 || true)
-            if [ -n "$ERR" ]; then
-                ERROR_TEXT="$ERR"
-                break
-            fi
         fi
     done
+
+    DEBUG_ZIP_ARG=""
+    if [ -f bin/output/reports/build_failure_debug.zip ]; then
+        DEBUG_ZIP_ARG="build_failure_debug.zip"
+    fi
+
     if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
         $SUDO python3 bin/scripts/telegram.py finish FAIL \
-            ${ERROR_TEXT:+--error "$ERROR_TEXT"} 2>/dev/null || true
+            ${ERROR_TEXT:+--error "$ERROR_TEXT"} \
+            ${DEBUG_ZIP_ARG:+--debug-zip "$DEBUG_ZIP_ARG"} \
+            2>/dev/null || true
     fi
 fi
 
@@ -270,6 +348,8 @@ echo "[CLEANUP] Removing heavy temporary directories..."
 rm -rf bin/temp bin/work 2>/dev/null || true
 rm -rf bin/output/images bin/output/system bin/output/vendor \
        bin/output/product bin/output/mi_ext 2>/dev/null || true
+rm -f /tmp/tg_watch_stop /tmp/mezo_build.log /tmp/mezo_pack.log \
+      /tmp/mezo_package.log /tmp/mezo_setup.log 2>/dev/null || true
 echo "[CLEANUP] Done. Reports preserved at bin/output/reports/"
 
 exit $OVERALL_EXIT
