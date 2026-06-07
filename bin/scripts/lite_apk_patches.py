@@ -161,6 +161,8 @@ def _sysui_entry(
     smali_compile_commands: Optional[list] = None,
     smali_compile_stdout: Optional[str] = None,
     smali_compile_stderr: Optional[str] = None,
+    # Multi-strategy rebuild log
+    rebuild_strategies: Optional[list] = None,
 ) -> dict:
     return {
         "patch_name": "miuisystemui_volte_cn",
@@ -186,6 +188,7 @@ def _sysui_entry(
         "smali_compile_commands": smali_compile_commands or [],
         "smali_compile_stdout": smali_compile_stdout,
         "smali_compile_stderr": smali_compile_stderr,
+        "rebuild_strategies": rebuild_strategies or [],
     }
 
 
@@ -810,6 +813,122 @@ def _rebuild_miuisystemui_smali_only(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _rebuild_miuisystemui_with_apkeditor(
+    original_apk: Path,
+    expected_name: str,
+    target_classes: Optional[list] = None,
+) -> dict:
+    """APKEditor-based rebuild fallback for MiuiSystemUI.apk (Strategy C).
+
+    Decodes with APKEditor, re-applies smali patches in the decoded output, then
+    builds with APKEditor.  Avoids both apktool/aapt2 and the smali standalone
+    dexlib issue that causes IndexOutOfBoundsException on large DEX files.
+
+    Returns same shape as _rebuild_miuisystemui_smali_only() plus APKEditor
+    command / rc diagnostics.
+    """
+    apke = _find_apkeditor_jar()
+    if not apke:
+        return {
+            "ok": False, "rebuilt_path": None, "restored_path": None,
+            "restore_in_place": False, "permission": None, "stdout": "", "stderr": "",
+            "smali_compile_tool": None,
+            "changed_smali_folders": [], "dex_files_rebuilt": [], "dex_entries_replaced": [],
+            "apkeditor_decode_command": None, "apkeditor_build_command": None,
+            "apkeditor_decode_rc": None, "apkeditor_build_rc": None,
+            "error": "APKEditor.jar not found — Strategy C skipped",
+        }
+
+    ae_dir = Path(tempfile.mkdtemp(prefix="dz_msui_ae_"))
+    tmp_out = Path(tempfile.mktemp(suffix=f"_{expected_name}", dir=str(original_apk.parent)))
+    dec_cmd = ["java", "-jar", str(apke), "d", "-f", "-i", str(original_apk), "-o", str(ae_dir)]
+    dec_rc: Optional[int] = None
+    bld_cmd: Optional[list] = None
+    bld_rc: Optional[int] = None
+
+    try:
+        # 1. APKEditor decode
+        r_dec = subprocess.run(dec_cmd, capture_output=True, text=True, timeout=300)
+        dec_rc = r_dec.returncode
+        if r_dec.returncode != 0:
+            return {
+                "ok": False, "rebuilt_path": None, "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "stdout": r_dec.stdout[-500:], "stderr": r_dec.stderr[-500:],
+                "smali_compile_tool": str(apke),
+                "changed_smali_folders": [], "dex_files_rebuilt": [], "dex_entries_replaced": [],
+                "apkeditor_decode_command": " ".join(str(x) for x in dec_cmd),
+                "apkeditor_build_command": None,
+                "apkeditor_decode_rc": dec_rc,
+                "apkeditor_build_rc": None,
+                "error": f"APKEditor decode rc={r_dec.returncode}: {r_dec.stderr[-200:]}",
+            }
+
+        # 2. Re-apply smali patches to the APKEditor-decoded directory
+        _patch_sysui_in_dir(ae_dir, [])  # discard per-class report entries; we track at APK level
+
+        # 3. APKEditor build
+        bld_cmd = ["java", "-jar", str(apke), "b", "-f", "-i", str(ae_dir), "-o", str(tmp_out)]
+        r_bld = subprocess.run(bld_cmd, capture_output=True, text=True, timeout=300)
+        bld_rc = r_bld.returncode
+        if r_bld.returncode != 0 or not tmp_out.is_file():
+            tmp_out.unlink(missing_ok=True)
+            return {
+                "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+                "restore_in_place": False, "permission": None,
+                "stdout": r_bld.stdout[-500:], "stderr": r_bld.stderr[-500:],
+                "smali_compile_tool": str(apke),
+                "changed_smali_folders": [str(ae_dir)],
+                "dex_files_rebuilt": [], "dex_entries_replaced": [],
+                "apkeditor_decode_command": " ".join(str(x) for x in dec_cmd),
+                "apkeditor_build_command": " ".join(str(x) for x in bld_cmd),
+                "apkeditor_decode_rc": dec_rc,
+                "apkeditor_build_rc": bld_rc,
+                "error": f"APKEditor build rc={r_bld.returncode}: {r_bld.stderr[-200:]}",
+            }
+
+        # 4. Restore in place — original APK only touched on success
+        restore = _restore_via_move(tmp_out, original_apk)
+        return {
+            "ok": restore["restored"],
+            "rebuilt_path": restore.get("rebuilt_path"),
+            "restored_path": restore.get("restored_path"),
+            "restore_in_place": restore["restored"],
+            "permission": restore.get("permission"),
+            "smali_compile_tool": str(apke),
+            "changed_smali_folders": [str(ae_dir)],
+            "dex_files_rebuilt": [],
+            "dex_entries_replaced": [],
+            "stdout": r_bld.stdout[-500:],
+            "stderr": r_bld.stderr[-500:],
+            "apkeditor_decode_command": " ".join(str(x) for x in dec_cmd),
+            "apkeditor_build_command": " ".join(str(x) for x in bld_cmd),
+            "apkeditor_decode_rc": dec_rc,
+            "apkeditor_build_rc": bld_rc,
+            "error": restore.get("error"),
+        }
+    except Exception as exc:
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {
+            "ok": False, "rebuilt_path": str(tmp_out), "restored_path": None,
+            "restore_in_place": False, "permission": None,
+            "smali_compile_tool": str(apke),
+            "changed_smali_folders": [], "dex_files_rebuilt": [], "dex_entries_replaced": [],
+            "stdout": "", "stderr": "",
+            "apkeditor_decode_command": " ".join(str(x) for x in dec_cmd),
+            "apkeditor_build_command": " ".join(str(x) for x in bld_cmd) if bld_cmd else None,
+            "apkeditor_decode_rc": dec_rc,
+            "apkeditor_build_rc": bld_rc,
+            "error": str(exc),
+        }
+    finally:
+        import shutil
+        shutil.rmtree(ae_dir, ignore_errors=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PART 1 — Provision.apk strings patch
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1157,13 +1276,56 @@ def apply_miuisystemui_volte_cn_patch(
     try:
         changed_classes = _patch_sysui_in_dir(unpacked, report)
         if we_decompiled and apk_path:
+            rebuild_strategies: list[dict] = []
+
+            # ── Strategy A: apktool full rebuild ─────────────────────────────
             rr = _rebuild_and_restore(unpacked, apk_path, "MiuiSystemUI.apk")
-            if not rr["ok"]:
-                # apktool/aapt2 rebuild failed — smali-only fallback (DEX-only replace)
+            apktool_jar = _find_apktool()
+            rebuild_strategies.append({
+                "name": "apktool",
+                "attempted": True,
+                "command": (
+                    f"java -jar {apktool_jar} b -f {unpacked} -o ..."
+                    if apktool_jar else "apktool not found"
+                ),
+                "rc": None,
+                "stdout": (rr.get("stdout") or "")[-500:],
+                "stderr": "\n".join((rr.get("stderr") or "").splitlines()[:80]),
+                "success": rr["ok"],
+            })
+
+            if rr["ok"]:
+                report.append(_sysui_entry(
+                    "MiuiSystemUI", str(apk_path), found=True, status="changed",
+                    detail=f"MiuiSystemUI.apk patched and restored in place (os={os_det})",
+                    original_path=str(apk_path),
+                    rebuilt_path=rr["rebuilt_path"],
+                    restored_path=rr["restored_path"],
+                    restore_in_place=True,
+                    permission=rr["permission"],
+                    os_detection=os_det,
+                    changed_smali_classes=changed_classes,
+                    rebuild_strategies=rebuild_strategies,
+                ))
+            else:
+                # ── Strategy B: smali-only DEX replace ──────────────────────
                 smali_rr = _rebuild_miuisystemui_smali_only(
                     unpacked, apk_path, "MiuiSystemUI.apk",
                     target_classes=changed_classes or list(_SYSUI_TARGET_CLASSES),
                 )
+                smali_cmds = smali_rr.get("smali_compile_commands") or []
+                rebuild_strategies.append({
+                    "name": "smali_zip",
+                    "attempted": True,
+                    "command": smali_cmds[0] if smali_cmds else None,
+                    "rc": None,
+                    "stdout": (smali_rr.get("smali_compile_stdout") or "")[-500:],
+                    "stderr": "\n".join(
+                        (smali_rr.get("smali_compile_stderr") or "").splitlines()[:80]
+                    ),
+                    "success": smali_rr["ok"],
+                })
+
                 if smali_rr["ok"]:
                     report.append(_sysui_entry(
                         "MiuiSystemUI", str(apk_path), found=True, status="changed",
@@ -1182,32 +1344,67 @@ def apply_miuisystemui_volte_cn_patch(
                         dex_files_rebuilt=smali_rr.get("dex_files_rebuilt"),
                         dex_entries_replaced=smali_rr.get("dex_entries_replaced"),
                         smali_compile_tool=smali_rr.get("smali_compile_tool"),
+                        rebuild_strategies=rebuild_strategies,
                     ))
                 else:
-                    report.append(_sysui_entry(
-                        "MiuiSystemUI", str(apk_path), found=True, status="failed_optional",
-                        error=f"apktool: {rr['error']} | smali-zip: {smali_rr['error']}",
-                        original_path=str(apk_path),
-                        rebuilt_path=rr.get("rebuilt_path"),
-                        os_detection=os_det,
-                        changed_smali_classes=changed_classes,
-                        changed_smali_folders=smali_rr.get("changed_smali_folders"),
-                        smali_compile_tool=smali_rr.get("smali_compile_tool"),
-                        smali_compile_commands=smali_rr.get("smali_compile_commands"),
-                        smali_compile_stderr=smali_rr.get("smali_compile_stderr"),
-                    ))
-            else:
-                report.append(_sysui_entry(
-                    "MiuiSystemUI", str(apk_path), found=True, status="changed",
-                    detail=f"MiuiSystemUI.apk patched and restored in place (os={os_det})",
-                    original_path=str(apk_path),
-                    rebuilt_path=rr["rebuilt_path"],
-                    restored_path=rr["restored_path"],
-                    restore_in_place=True,
-                    permission=rr["permission"],
-                    os_detection=os_det,
-                    changed_smali_classes=changed_classes,
-                ))
+                    # ── Strategy C: APKEditor smali-only rebuild ─────────────
+                    ae_rr = _rebuild_miuisystemui_with_apkeditor(
+                        apk_path, "MiuiSystemUI.apk",
+                        target_classes=changed_classes or list(_SYSUI_TARGET_CLASSES),
+                    )
+                    rebuild_strategies.append({
+                        "name": "apkeditor",
+                        "attempted": True,
+                        "command": (
+                            ae_rr.get("apkeditor_build_command")
+                            or ae_rr.get("apkeditor_decode_command")
+                        ),
+                        "rc": ae_rr.get("apkeditor_build_rc"),
+                        "stdout": (ae_rr.get("stdout") or "")[-500:],
+                        "stderr": "\n".join(
+                            (ae_rr.get("stderr") or "").splitlines()[:80]
+                        ),
+                        "success": ae_rr["ok"],
+                    })
+
+                    if ae_rr["ok"]:
+                        report.append(_sysui_entry(
+                            "MiuiSystemUI", str(apk_path), found=True, status="changed",
+                            detail=(
+                                f"MiuiSystemUI.apk patched+restored via APKEditor fallback "
+                                f"(apktool+smali-zip failed, os={os_det})"
+                            ),
+                            original_path=str(apk_path),
+                            rebuilt_path=ae_rr.get("rebuilt_path"),
+                            restored_path=ae_rr.get("restored_path"),
+                            restore_in_place=True,
+                            permission=ae_rr.get("permission"),
+                            os_detection=os_det,
+                            changed_smali_classes=changed_classes,
+                            changed_smali_folders=ae_rr.get("changed_smali_folders"),
+                            smali_compile_tool=ae_rr.get("smali_compile_tool"),
+                            rebuild_strategies=rebuild_strategies,
+                        ))
+                    else:
+                        # All strategies failed
+                        report.append(_sysui_entry(
+                            "MiuiSystemUI", str(apk_path), found=True,
+                            status="failed_optional",
+                            error=(
+                                f"apktool: {rr['error']} | "
+                                f"smali-zip: {smali_rr['error']} | "
+                                f"apkeditor: {ae_rr['error']}"
+                            ),
+                            original_path=str(apk_path),
+                            rebuilt_path=rr.get("rebuilt_path"),
+                            os_detection=os_det,
+                            changed_smali_classes=changed_classes,
+                            changed_smali_folders=smali_rr.get("changed_smali_folders"),
+                            smali_compile_tool=smali_rr.get("smali_compile_tool"),
+                            smali_compile_commands=smali_rr.get("smali_compile_commands"),
+                            smali_compile_stderr=smali_rr.get("smali_compile_stderr"),
+                            rebuild_strategies=rebuild_strategies,
+                        ))
     finally:
         if we_decompiled:
             import shutil

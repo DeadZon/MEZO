@@ -244,11 +244,22 @@ def _classify_status(status: str, detail: str = "") -> str:
 
 # ── Totals ────────────────────────────────────────────────────────────────────
 
+def _is_restore_applicable(entry: dict) -> bool:
+    """True only for entries that represent a restorable file (APK/JAR/prop).
+
+    Individual smali-class or strings.xml patch entries lack original_path and
+    should not be counted as restore failures — they are internal sub-entries,
+    not final build artifacts.
+    """
+    return bool(entry.get("original_path") or entry.get("restored_path"))
+
+
 def _summarize_results(mod_reports: list[dict]) -> dict[str, Any]:
     totals: dict[str, int] = {
         "changed": 0, "skipped": 0, "skipped_not_found": 0,
         "failed": 0, "failed_optional": 0, "failed_fatal": 0,
-        "applied_via_group": 0, "restore_success": 0, "restore_failed": 0,
+        "applied_via_group": 0,
+        "restore_success": 0, "restore_failed": 0, "restore_not_applicable": 0,
         "total": 0,
     }
     for report in mod_reports:
@@ -267,11 +278,18 @@ def _summarize_results(mod_reports: list[dict]) -> dict[str, Any]:
                 totals["failed_optional"] += 1
             if s == "failed_fatal":
                 totals["failed_fatal"] += 1
-            rip = r.get("restore_in_place")
-            if rip is True:
-                totals["restore_success"] += 1
-            elif rip is False and cat == "changed":
-                totals["restore_failed"] += 1
+
+            # Restore totals — count only entries that represent restorable files.
+            # Individual smali-class and strings.xml entries have no original_path
+            # and must not inflate the failure count.
+            if _is_restore_applicable(r):
+                rip = r.get("restore_in_place")
+                if rip is True:
+                    totals["restore_success"] += 1
+                elif rip is False and cat in ("changed", "failed"):
+                    totals["restore_failed"] += 1
+            else:
+                totals["restore_not_applicable"] += 1
     return totals
 
 
@@ -308,15 +326,26 @@ def _format_txt(
     final_zip: str,
     loaded: list[str] | None = None,
     missing: list[str] | None = None,
+    pixeldrain_url: str = "",
 ) -> str:
     loaded = loaded or []
     missing = missing or []
+    restore_ok   = totals.get("restore_success", 0)
+    restore_fail = totals.get("restore_failed", 0)
+    restore_na   = totals.get("restore_not_applicable", 0)
+    restore_line = f"{restore_ok} OK / {restore_fail} FAIL"
+    if restore_na:
+        restore_line += f" ({restore_na} not applicable — class/string sub-entries)"
     lines = [
         "DeadZone Full Mod Report",
         "=" * 60,
         f"Generated     : {_ts()}",
         f"DZ_STYLE      : {dz_style}",
         f"Final ZIP     : {final_zip or '(not built yet)'}",
+    ]
+    if pixeldrain_url:
+        lines.append(f"PixelDrain    : {pixeldrain_url}")
+    lines += [
         "",
         "Summary:",
         f"  Applied/Changed/Success : {totals['changed']}",
@@ -324,7 +353,7 @@ def _format_txt(
         f"  Failed Optional         : {totals.get('failed_optional', 0)}",
         f"  Failed Fatal            : {totals.get('failed_fatal', 0)}",
         f"  Total                   : {totals['total']}",
-        f"  Restore in place        : {totals.get('restore_success', 0)} OK / {totals.get('restore_failed', 0)} FAIL",
+        f"  Restore in place        : {restore_line}",
         "",
         f"Reports loaded  : {', '.join(loaded) if loaded else '(none)'}",
         f"Reports missing : {', '.join(missing) if missing else '(none)'}",
@@ -392,18 +421,41 @@ def build_full_report(
     reports_dir: Path,
     dz_style: str = "",
     final_zip: str = "",
+    pixeldrain_url: str = "",
 ) -> dict[str, Any]:
+    reports_dir = Path(reports_dir)
     mod_reports, loaded, missing = _collect_mod_reports(reports_dir)
     totals = _summarize_results(mod_reports)
 
+    # Auto-load final_zip from final_zip_summary.json if not explicitly provided
+    if not final_zip:
+        fzs = reports_dir / "final_zip_summary.json"
+        if fzs.is_file():
+            try:
+                s = json.loads(fzs.read_text(encoding="utf-8"))
+                final_zip = s.get("final_zip_name", "")
+            except Exception:
+                pass
+
+    # Auto-load pixeldrain_url from pixeldrain_upload_report.json
+    if not pixeldrain_url:
+        pd_report = reports_dir / "pixeldrain_upload_report.json"
+        if pd_report.is_file():
+            try:
+                s = json.loads(pd_report.read_text(encoding="utf-8"))
+                pixeldrain_url = s.get("url", "")
+            except Exception:
+                pass
+
     full: dict[str, Any] = {
-        "generated":    _ts(),
-        "dz_style":     dz_style or os.environ.get("DZ_STYLE", ""),
-        "final_zip":    final_zip,
-        "totals":       totals,
+        "generated":       _ts(),
+        "dz_style":        dz_style or os.environ.get("DZ_STYLE", ""),
+        "final_zip":       final_zip,
+        "pixeldrain_url":  pixeldrain_url,
+        "totals":          totals,
         "reports_loaded":  loaded,
         "reports_missing": missing,
-        "mod_reports":  mod_reports,
+        "mod_reports":     mod_reports,
     }
     return full
 
@@ -412,9 +464,13 @@ def write_full_report(
     reports_dir: Path,
     dz_style: str = "",
     final_zip: str = "",
+    pixeldrain_url: str = "",
 ) -> None:
+    reports_dir = Path(reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
-    full = build_full_report(reports_dir, dz_style=dz_style, final_zip=final_zip)
+    full = build_full_report(
+        reports_dir, dz_style=dz_style, final_zip=final_zip, pixeldrain_url=pixeldrain_url
+    )
 
     txt = _format_txt(
         dz_style=full["dz_style"],
@@ -423,6 +479,7 @@ def write_full_report(
         final_zip=full["final_zip"],
         loaded=full["reports_loaded"],
         missing=full["reports_missing"],
+        pixeldrain_url=full.get("pixeldrain_url", ""),
     )
 
     txt_path  = reports_dir / "deadzone_full_mod_report.txt"
@@ -454,14 +511,6 @@ if __name__ == "__main__":
     rdir = work_dir / "bin" / "output" / "reports"
     style = args.style or os.environ.get("DZ_STYLE", "")
 
-    final_zip_summary = rdir / "final_zip_summary.json"
-    final_zip = ""
-    if final_zip_summary.is_file():
-        try:
-            s = json.loads(final_zip_summary.read_text(encoding="utf-8"))
-            final_zip = s.get("final_zip_name", "")
-        except Exception:
-            pass
-
-    write_full_report(rdir, dz_style=style, final_zip=final_zip)
+    # final_zip and pixeldrain_url are auto-loaded inside write_full_report
+    write_full_report(rdir, dz_style=style)
     sys.exit(0)
