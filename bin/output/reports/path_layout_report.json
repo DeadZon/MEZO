@@ -1,0 +1,53 @@
+{
+  "generated": "2026-06-06T12:39:42.970693+00:00",
+  "active_style": "stable",
+  "legacy_output_used": false,
+  "paths": {
+    "repo_root": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO",
+      "status": "exists"
+    },
+    "bin_dir": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin",
+      "status": "exists"
+    },
+    "scripts_dir": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\scripts",
+      "status": "exists"
+    },
+    "output_dir": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\output",
+      "status": "exists"
+    },
+    "reports_dir": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\output\\reports",
+      "status": "exists"
+    },
+    "style_dir": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\modfile\\Styles\\Stable",
+      "status": "exists"
+    },
+    "styles_root": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\modfile\\Styles",
+      "status": "exists"
+    }
+  },
+  "style_dirs": {
+    "lite": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\modfile\\Styles\\Lite",
+      "status": "exists"
+    },
+    "stable": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\modfile\\Styles\\Stable",
+      "status": "exists"
+    },
+    "legend": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\modfile\\Styles\\Legend",
+      "status": "exists"
+    },
+    "ninja": {
+      "path": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\bin\\modfile\\Styles\\Ninja",
+      "status": "exists"
+    }
+  }
+}

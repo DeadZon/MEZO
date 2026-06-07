@@ -1,0 +1,105 @@
+========================================================================
+DeadZone MEZO Framework Patch Report
+Generated : 2026-06-07T00:34:34.278287+00:00
+Work dir  : C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0
+========================================================================
+
+[JAR DECOMPILE / REBUILD / RESTORE]
+  [SKIP] framework_unpacked: (not found)
+       Reason: Not found in 4 searched paths
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\framework\framework.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\system\framework\framework.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\framework\framework.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\system\framework\framework.jar
+  [SKIP] services_unpacked: (not found)
+       Reason: Not found in 4 searched paths
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\framework\services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\system\framework\services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\framework\services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\system\framework\services.jar
+  [SKIP] miui_services_unpacked: (not found)
+       Reason: Not found in 20 searched paths
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system_ext\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system_ext\system_ext\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system_ext\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system_ext\fremawork\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system_ext\system_ext\fremawork\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\system\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\system\system_ext\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\product\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\product\product\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system_ext\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system_ext\system_ext\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system_ext\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system_ext\fremawork\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system_ext\system_ext\fremawork\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\system\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\system\system_ext\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\product\framework\miui-services.jar
+       Searched: C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\build\baserom\images\product\product\framework\miui-services.jar
+
+[SIGNATURE_VERIFICATION_BYPASS]
+  Enabled  : True
+  Scanned  : 3
+  Modified : 0
+  Skipped  : 3
+  Failed   : 0
+
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\framework_unpacked
+           framework_unpacked missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\services_unpacked
+           services_unpacked missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\miui_services_unpacked
+           miui_services_unpacked missing — SKIPPED
+
+[INVOKE_CUSTOM_HANDLING]
+  Enabled  : True
+  Scanned  : 4
+  Modified : 0
+  Skipped  : 4
+  Failed   : 0
+
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\framework_unpacked
+           framework_unpacked missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\services_unpacked
+           services_unpacked missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\miui_services_unpacked
+           miui_services_unpacked missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0
+           All target dirs missing — broad scan skipped
+
+[FIX_BOOTLOOP_A15]
+  Enabled  : True
+  Scanned  : 4
+  Modified : 0
+  Skipped  : 4
+  Failed   : 0
+
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\framework_unpacked\smali_classes2
+           framework_unpacked/smali_classes2 missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\services_unpacked\smali_classes
+           services_unpacked/smali_classes missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\services_unpacked\smali_classes2
+           services_unpacked/smali_classes2 missing — SKIPPED
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\miui_services_unpacked\smali_classes
+           miui_services_unpacked/smali_classes missing — SKIPPED
+
+[MIUI_SERVICES_CN_GLOBAL_PATCHES]
+  Enabled  : True
+  Scanned  : 1
+  Modified : 0
+  Skipped  : 1
+  Failed   : 0
+
+  [SKIPPED         ] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_apply_stable_framework_pa0\miui_services_unpacked
+           miui_services_unpacked missing — SKIPPED
+
+========================================================================
+TOTALS
+  Scanned  : 12
+  Modified : 0
+  Skipped  : 12
+  Failed   : 0
+========================================================================

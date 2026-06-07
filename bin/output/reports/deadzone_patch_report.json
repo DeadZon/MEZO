@@ -1,0 +1,202 @@
+{
+  "generated": "2026-06-07T00:34:34.278287+00:00",
+  "work_dir": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0",
+  "decompile_info": {
+    "framework_unpacked": {
+      "decompiled": false,
+      "jar_path": null,
+      "unpacked_dir": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\framework_unpacked",
+      "searched_paths": [
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\framework\\framework.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\system\\framework\\framework.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\framework\\framework.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\system\\framework\\framework.jar"
+      ],
+      "reason": "Not found in 4 searched paths"
+    },
+    "services_unpacked": {
+      "decompiled": false,
+      "jar_path": null,
+      "unpacked_dir": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\services_unpacked",
+      "searched_paths": [
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\framework\\services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\system\\framework\\services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\framework\\services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\system\\framework\\services.jar"
+      ],
+      "reason": "Not found in 4 searched paths"
+    },
+    "miui_services_unpacked": {
+      "decompiled": false,
+      "jar_path": null,
+      "unpacked_dir": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\miui_services_unpacked",
+      "searched_paths": [
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system_ext\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system_ext\\system_ext\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system_ext\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system_ext\\fremawork\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system_ext\\system_ext\\fremawork\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\system\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\system\\system_ext\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\product\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\product\\product\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system_ext\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system_ext\\system_ext\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system_ext\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system_ext\\fremawork\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system_ext\\system_ext\\fremawork\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\system\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\system\\system_ext\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\product\\framework\\miui-services.jar",
+        "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\build\\baserom\\images\\product\\product\\framework\\miui-services.jar"
+      ],
+      "reason": "Not found in 20 searched paths"
+    }
+  },
+  "patches": {
+    "signature_verification_bypass": {
+      "enabled": true,
+      "total_scanned": 3,
+      "total_modified": 0,
+      "total_skipped": 3,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "signature_verification_bypass",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\framework_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "framework_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "signature_verification_bypass",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "signature_verification_bypass",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\miui_services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "miui_services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        }
+      ]
+    },
+    "invoke_custom_handling": {
+      "enabled": true,
+      "total_scanned": 4,
+      "total_modified": 0,
+      "total_skipped": 4,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\framework_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "framework_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\miui_services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "miui_services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0",
+          "found": false,
+          "status": "skipped",
+          "detail": "All target dirs missing \u2014 broad scan skipped",
+          "error": null
+        }
+      ]
+    },
+    "fix_bootloop_a15": {
+      "enabled": true,
+      "total_scanned": 4,
+      "total_modified": 0,
+      "total_skipped": 4,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\framework_unpacked\\smali_classes2",
+          "found": false,
+          "status": "skipped",
+          "detail": "framework_unpacked/smali_classes2 missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\services_unpacked\\smali_classes",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked/smali_classes missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\services_unpacked\\smali_classes2",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked/smali_classes2 missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\miui_services_unpacked\\smali_classes",
+          "found": false,
+          "status": "skipped",
+          "detail": "miui_services_unpacked/smali_classes missing \u2014 SKIPPED",
+          "error": null
+        }
+      ]
+    },
+    "miui_services_cn_global_patches": {
+      "enabled": true,
+      "total_scanned": 1,
+      "total_modified": 0,
+      "total_skipped": 1,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "miui_services_cn_global_patches",
+          "target_class": "miui_services_unpacked",
+          "target_file": "C:\\Users\\hyper\\AppData\\Local\\Temp\\pytest-of-hyper\\pytest-89\\test_apply_stable_framework_pa0\\miui_services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "replacements_count": 0,
+          "const_insertions_count": 0,
+          "files_modified": [],
+          "detail": "miui_services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        }
+      ]
+    }
+  },
+  "totals": {
+    "total_scanned": 12,
+    "total_modified": 0,
+    "total_skipped": 12,
+    "total_failed": 0
+  }
+}

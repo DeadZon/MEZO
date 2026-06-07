@@ -1,0 +1,23 @@
+================================================================
+DeadZone MEZO Path Layout Report
+Generated         : 2026-06-06T12:39:42.970693+00:00
+Active style      : stable
+Legacy output used: False
+================================================================
+
+Resolved Paths:
+  repo_root        [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO
+  bin_dir          [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin
+  scripts_dir      [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\scripts
+  output_dir       [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\output
+  reports_dir      [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\output\reports
+  style_dir        [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\modfile\Styles\Stable
+  styles_root      [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\modfile\Styles
+
+Style Directories:
+  lite       [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\modfile\Styles\Lite
+  stable     [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\modfile\Styles\Stable
+  legend     [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\modfile\Styles\Legend
+  ninja      [EXISTS ] C:\Users\hyper\Desktop\DeadZone_MEZO\bin\modfile\Styles\Ninja
+
+================================================================

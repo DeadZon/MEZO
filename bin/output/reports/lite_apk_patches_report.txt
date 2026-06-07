@@ -1,0 +1,48 @@
+========================================================================
+DeadZone MEZO Lite APK Patches Report
+Generated : 2026-06-07T00:34:32.213214+00:00
+Work dir  : C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_lite_apk_patches_does_not0
+========================================================================
+
+[PROVISION_MEZO_STRINGS]
+  Scanned        : 1
+  Modified       : 0
+  Skipped        : 1
+  Skipped (NF)   : 1
+  Failed         : 0
+  Failed (opt.)  : 0
+
+  [SKIPPED_NOT_FOUND] [MISSING] C:\Users\hyper\AppData\Local\Temp\pytest-of-hyper\pytest-89\test_lite_apk_patches_does_not0\system_ext\priv-app\Provision\Provision.apk
+           Provision.apk not found and no provision_unpacked dir — SKIPPED_NOT_FOUND
+
+[MIUISYSTEMUI_VOLTE_CN]
+  Scanned        : 1
+  Modified       : 0
+  Skipped        : 1
+  Skipped (NF)   : 1
+  Failed         : 0
+  Failed (opt.)  : 0
+
+  [SKIPPED_NOT_FOUND] [MISSING] MiuiSystemUI
+           MiuiSystemUI.apk not found and no miuisystemui_unpacked dir — SKIPPED_NOT_FOUND
+
+[POWERKEEPER_CN_GLOBAL]
+  Scanned        : 1
+  Modified       : 0
+  Skipped        : 1
+  Skipped (NF)   : 1
+  Failed         : 0
+  Failed (opt.)  : 0
+
+  [SKIPPED_NOT_FOUND] [MISSING] PowerKeeper
+           PowerKeeper.apk not found and no powerkeeper_unpacked dir — SKIPPED_NOT_FOUND
+
+========================================================================
+TOTALS
+  Scanned        : 3
+  Modified       : 0
+  Skipped        : 3
+  Skipped (NF)   : 3
+  Failed         : 0
+  Failed (opt.)  : 0
+========================================================================

@@ -1,26 +1,5 @@
-
-**/__pycache__/
 __pycache__/
 *.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Runtime output (never commit)
-bin/output/
-output/
-
-# ROM build artifacts
-*.zip
-*.img
-*.zst
-*_unpacked/
-_input_roms/
-
-# DeadZone MEZO JAR mods — local reference artifacts (never commit)
-*.mtcr
-MyMezo.zip
-_DeadZoneRefs/
-.tmp_deadzone_refs/
-*_mtcr/
-bin/third_party/mymezo_mtcr/
+*.pyo
+.env
+.env.*

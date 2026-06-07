@@ -1,0 +1,127 @@
+{
+  "generated": "2026-06-06T11:50:14.574808+00:00",
+  "work_dir": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO",
+  "patches": {
+    "signature_verification_bypass": {
+      "enabled": true,
+      "total_scanned": 3,
+      "total_modified": 0,
+      "total_skipped": 3,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "signature_verification_bypass",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\framework_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "framework_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "signature_verification_bypass",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "signature_verification_bypass",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\miui_services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "miui_services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        }
+      ]
+    },
+    "invoke_custom_handling": {
+      "enabled": true,
+      "total_scanned": 4,
+      "total_modified": 0,
+      "total_skipped": 4,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\framework_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "framework_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\miui_services_unpacked",
+          "found": false,
+          "status": "skipped",
+          "detail": "miui_services_unpacked missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "invoke_custom_handling",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO",
+          "found": false,
+          "status": "skipped",
+          "detail": "All target dirs missing \u2014 broad scan skipped",
+          "error": null
+        }
+      ]
+    },
+    "fix_bootloop_a15": {
+      "enabled": true,
+      "total_scanned": 4,
+      "total_modified": 0,
+      "total_skipped": 4,
+      "total_failed": 0,
+      "results": [
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\framework_unpacked\\smali_classes2",
+          "found": false,
+          "status": "skipped",
+          "detail": "framework_unpacked/smali_classes2 missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\services_unpacked\\smali_classes",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked/smali_classes missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\services_unpacked\\smali_classes2",
+          "found": false,
+          "status": "skipped",
+          "detail": "services_unpacked/smali_classes2 missing \u2014 SKIPPED",
+          "error": null
+        },
+        {
+          "patch_name": "fix_bootloop_a15",
+          "target_file": "C:\\Users\\hyper\\Desktop\\DeadZone_MEZO\\miui_services_unpacked\\smali_classes",
+          "found": false,
+          "status": "skipped",
+          "detail": "miui_services_unpacked/smali_classes missing \u2014 SKIPPED",
+          "error": null
+        }
+      ]
+    }
+  },
+  "totals": {
+    "total_scanned": 11,
+    "total_modified": 0,
+    "total_skipped": 11,
+    "total_failed": 0
+  }
+}
