@@ -1,0 +1,93 @@
+name: MEZO Fly MTK
+
+on:
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: 'ROM download URL'
+        required: true
+        type: string
+      style:
+        description: 'DeadZone ROM Style'
+        required: true
+        default: 'Plus'
+        type: choice
+        options:
+          - Lite
+          - Plus
+          - Legend
+          - Ninja
+      mode:
+        description: 'Build mode'
+        required: true
+        default: 'build'
+        type: choice
+        options:
+          - build
+          - production
+      upload_pixeldrain:
+        description: 'Upload final ZIP to PixelDrain'
+        type: boolean
+        default: false
+      notify_telegram:
+        description: 'Send Telegram notifications'
+        type: boolean
+        default: true
+      allow_oversized_final:
+        description: 'Allow final ZIP over 4.5 GB'
+        type: boolean
+        default: false
+      VM_CPUS:
+        description: 'Fly.io VM CPUs'
+        required: true
+        default: '8'
+      VM_MEMORY:
+        description: 'Fly.io VM Memory in MB'
+        required: true
+        default: '65536'
+
+jobs:
+  fly_build:
+    name: Launch MTK build on Fly.io
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_MTK_API_TOKEN }}
+
+      - name: Build Docker image and launch Fly machine
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_MTK_API_TOKEN }}
+        run: |
+          flyctl machine run . \
+            --app mezo-mtk-builder \
+            --region fra \
+            --vm-cpu-kind performance \
+            --vm-cpus "${{ inputs.VM_CPUS }}" \
+            --vm-memory "${{ inputs.VM_MEMORY }}" \
+            --volume mezo_mtk_data:/mnt/mezo_data \
+            --env SOC=mtk \
+            --env TG_SOC=mtk \
+            --env "ROM_URL=${{ inputs.rom_url }}" \
+            --env "STYLE=${{ inputs.style }}" \
+            --env "MODE=${{ inputs.mode }}" \
+            --env "UPLOAD_PIXELDRAIN=${{ inputs.upload_pixeldrain }}" \
+            --env "NOTIFY_TELEGRAM=${{ inputs.notify_telegram }}" \
+            --env "ALLOW_OVERSIZED_FINAL=${{ inputs.allow_oversized_final }}" \
+            --env "PIXELDRAIN_API_KEY=${{ secrets.PIXELDRAIN_API_KEY }}" \
+            --env "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            --env "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --env "TELEGRAM_MTK_CHAT_ID=${{ secrets.TELEGRAM_MTK_CHAT_ID }}" \
+            --env "TELEGRAM_SNAPDRAGON_CHAT_ID=${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}" \
+            --env "GITHUB_REPOSITORY=${{ github.repository }}" \
+            --env "GITHUB_RUN_ID=${{ github.run_id }}" \
+            --env "GITHUB_RUN_NUMBER=${{ github.run_number }}" \
+            --env "GITHUB_ACTOR=${{ github.actor }}" \
+            --env "GITHUB_REF_NAME=${{ github.ref_name }}" \
+            --env "GITHUB_SHA=${{ github.sha }}" \
+            --rm
