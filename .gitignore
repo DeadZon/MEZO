@@ -2,9 +2,14 @@
 **/__pycache__/
 __pycache__/
 *.pyc
+*.pyo
+.env
+.env.*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+bot/__pycache__/
+bot/*.pyc
 
 # Runtime output (never commit)
 bin/output/

@@ -1,0 +1,24 @@
+name: Deploy MEZO Bot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy_bot:
+    name: Deploy Telegram bot to Fly.io
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_BOT_API_TOKEN }}
+
+      - name: Deploy bot
+        working-directory: bot
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_BOT_API_TOKEN }}
+        run: flyctl deploy --remote-only
