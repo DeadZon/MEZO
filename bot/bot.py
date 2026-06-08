@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.parse
 
@@ -358,19 +359,19 @@ def github_dispatch_workflow(workflow_file: str, inputs: dict) -> tuple:
         return 0, {"error": str(exc)}
 
 
-def _poll_for_run_url(
+def _poll_for_run_id(
     workflow_file: str,
     dispatch_time: float,
     max_wait: int = 30,
-) -> str:
-    """Poll GitHub Actions API to find the run URL for a just-dispatched workflow.
+) -> int | None:
+    """Poll GitHub Actions API to find the run ID for a just-dispatched workflow.
 
-    Returns run URL string if found within max_wait seconds, else empty string.
-    Does NOT print the token.
+    Returns integer run_id if found within max_wait seconds, else None.
+    Never logs the token or any GitHub URLs — for internal use only.
     """
     token = get_github_token()
     if not token:
-        return ""
+        return None
 
     url = (
         f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
@@ -388,22 +389,96 @@ def _poll_for_run_url(
             runs = resp.json().get("workflow_runs", [])
             for run in runs:
                 created = run.get("created_at", "")
-                # created_at is ISO8601 UTC; compare roughly
                 try:
                     import datetime as _dt
                     ct = _dt.datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
                     if ct >= dispatch_time - 10:  # 10s tolerance
-                        run_id  = run.get("id", "")
-                        server  = "https://github.com"
-                        repo    = f"{REPO_OWNER}/{REPO_NAME}"
-                        if run_id:
-                            return f"{server}/{repo}/actions/runs/{run_id}"
+                        rid = run.get("id")
+                        if rid:
+                            return int(rid)
                 except Exception:
                     pass
         except Exception:
             pass
 
-    return ""
+    return None
+
+
+def _fetch_run_status(run_id: int) -> dict:
+    """Fetch current status/conclusion of a workflow run. Returns dict or {}."""
+    token = get_github_token()
+    if not token:
+        return {}
+    url = (
+        f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
+        f"/actions/runs/{run_id}"
+    )
+    try:
+        resp = requests.get(url, headers=_github_headers(token), timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            return {"status": data.get("status", ""), "conclusion": data.get("conclusion", "")}
+    except Exception:
+        pass
+    return {}
+
+
+def _fly_startup_failure_text(style: str, mode: str, b_label: str, srv_line: str) -> str:
+    return (
+        f"❌ *Build startup failed.*\n\n"
+        f"🚀 Backend: {b_label}\n"
+        f"🎨 Style: `{style}`\n"
+        f"⚙️ Mode: `{mode}`"
+        f"{srv_line}\n\n"
+        f"Reason: Fly.io could not start the builder machine.\n"
+        f"Try again later or choose a smaller builder size.\n\n"
+        f"Project DeadZone By MEZO Enjoy"
+    )
+
+
+def _watch_fly_startup(
+    run_id: int,
+    chat_id: int,
+    msg_id: int,
+    style: str,
+    mode: str,
+    b_label: str,
+    srv_line: str,
+) -> None:
+    """Background thread: poll workflow run status and edit the Telegram message if Fly startup fails."""
+    _FAIL_CONCLUSIONS = {"failure", "cancelled", "timed_out", "action_required"}
+    _POLL_INTERVAL    = 10   # seconds between polls
+    _MAX_RUNTIME      = 180  # give up after 3 minutes
+
+    deadline = time.time() + _MAX_RUNTIME
+    while time.time() < deadline:
+        time.sleep(_POLL_INTERVAL)
+        try:
+            info       = _fetch_run_status(run_id)
+            status     = info.get("status", "")
+            conclusion = info.get("conclusion", "")
+            log.debug("fly_watch: run_id=%s status=%s conclusion=%s", run_id, status, conclusion)
+
+            if status == "completed":
+                if conclusion in _FAIL_CONCLUSIONS:
+                    log.warning("fly_watch: run %s failed (%s) — editing bot message", run_id, conclusion)
+                    fail_text = _fly_startup_failure_text(style, mode, b_label, srv_line)
+                    try:
+                        bot.edit_message_text(
+                            fail_text,
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            parse_mode="Markdown",
+                            disable_web_page_preview=True,
+                        )
+                    except Exception as exc:
+                        log.warning("fly_watch: could not edit message: %s", exc)
+                return  # completed (success or failure) — done watching
+
+        except Exception as exc:
+            log.debug("fly_watch poll error: %s", exc)
+
+    log.info("fly_watch: 3-minute timeout for run_id=%s — live card should be up", run_id)
 
 
 def format_github_error(status_code: int, response_body: dict, workflow_file: str) -> str:
@@ -637,28 +712,26 @@ def _do_dispatch(chat_id: int, user_id: int, edit_msg_id: int | None = None) -> 
         bot.send_message(chat_id, f"❌ Config error: {exc}")
         return
 
-    inputs      = build_dispatch_inputs(sess)
-    b_label     = _lbl_backend(sess["backend"])
-    waking_line = (
-        "Waking up Fly.io server..."
-        if sess["backend"] == "fly"
-        else "Build started on GitHub Actions..."
-    )
+    inputs  = build_dispatch_inputs(sess)
+    b_label = _lbl_backend(sess["backend"])
 
     dispatch_time = time.time()
     log.info("Dispatching workflow=%s backend=%s inputs=%s", workflow_file, sess["backend"], inputs)
     status_code, response_body = github_dispatch_workflow(workflow_file, inputs)
 
+    run_id:   int | None = None
+    srv_line: str        = ""
+    is_fly:   bool       = False
+
     if status_code == 204:
+        is_fly   = sess["backend"] == "fly"
         srv_line = f"\n🖥 Server: `{inputs['server_id']}`" if "server_id" in inputs else ""
 
-        # Poll internally for run status — never exposed to Telegram
-        run_url = _poll_for_run_url(workflow_file, dispatch_time, max_wait=30)
-        log.info("Dispatch OK: workflow=%s style=%s run_found=%s", workflow_file, sess["style"], bool(run_url))
+        # Poll internally for run_id — never exposed to Telegram
+        run_id = _poll_for_run_id(workflow_file, dispatch_time, max_wait=30)
+        log.info("Dispatch OK: workflow=%s style=%s run_id=%s", workflow_file, sess["style"], run_id)
 
-        is_fly = sess["backend"] == "fly"
         waking = "Waking up Fly.io builder..." if is_fly else "Build started."
-
         text = (
             f"✅ *Build request accepted.*\n\n"
             f"🎨 Style: `{sess['style']}`\n"
@@ -677,16 +750,43 @@ def _do_dispatch(chat_id: int, user_id: int, edit_msg_id: int | None = None) -> 
     sess["state"] = "finished"
     _set_sess(chat_id, user_id, sess)
 
+    # Send or edit message — always capture the resulting message_id
+    sent_msg_id: int | None = edit_msg_id
     if edit_msg_id:
         try:
-            bot.edit_message_text(
+            result = bot.edit_message_text(
                 text, chat_id=chat_id, message_id=edit_msg_id,
                 parse_mode="Markdown", disable_web_page_preview=True,
             )
-            return
+            if result and hasattr(result, "message_id"):
+                sent_msg_id = result.message_id
+        except Exception:
+            try:
+                result = bot.send_message(
+                    chat_id, text, parse_mode="Markdown", disable_web_page_preview=True
+                )
+                if result and hasattr(result, "message_id"):
+                    sent_msg_id = result.message_id
+            except Exception:
+                pass
+    else:
+        try:
+            result = bot.send_message(
+                chat_id, text, parse_mode="Markdown", disable_web_page_preview=True
+            )
+            if result and hasattr(result, "message_id"):
+                sent_msg_id = result.message_id
         except Exception:
             pass
-    bot.send_message(chat_id, text, parse_mode="Markdown", disable_web_page_preview=True)
+
+    # For Fly builds: start a background thread to detect startup failure and update the message
+    if status_code == 204 and is_fly and run_id and sent_msg_id:
+        threading.Thread(
+            target=_watch_fly_startup,
+            args=(run_id, chat_id, sent_msg_id, sess["style"], sess["mode"], b_label, srv_line),
+            daemon=True,
+        ).start()
+        log.info("fly_watch started: run_id=%s msg_id=%s", run_id, sent_msg_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

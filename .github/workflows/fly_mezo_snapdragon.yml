@@ -93,7 +93,7 @@ jobs:
           echo "  MEZO Fly Snapdragon Build"
           echo "  App       : ${FLY_APP}"
           echo "  Region    : fra"
-          echo "  Volume    : ${FLY_VOLUME}"
+          echo "  Volume    : ${FLY_VOLUME} (ID resolved at runtime)"
           echo "  Server ID : ${{ inputs.server_id }}"
           echo "  VM CPUs   : ${{ inputs.VM_CPUS }}"
           echo "  VM Memory : ${{ inputs.VM_MEMORY }} MB"
@@ -102,54 +102,207 @@ jobs:
           echo "  PixelDrain: ${{ inputs.upload_pixeldrain }}"
           echo "  Telegram  : ${{ inputs.notify_telegram }}"
           echo "  Oversized : ${{ inputs.allow_oversized_final }}"
-          echo "  Run URL   : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           echo "============================================"
 
-      - name: Build Docker image and launch Fly machine
+      - name: Resolve volume, clean machines, and launch Fly builder
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_SNAPDRAGON_API_TOKEN }}
+          _FLY_API_TOKEN_2: ${{ secrets.FLY_SNAPDRAGON_API_TOKEN_2 }}
+          _SERVER_ID: ${{ inputs.server_id }}
+          _VM_CPUS: ${{ inputs.VM_CPUS }}
+          _VM_MEMORY: ${{ inputs.VM_MEMORY }}
+          _ROM_URL: ${{ inputs.rom_url }}
+          _STYLE: ${{ inputs.style }}
+          _MODE: ${{ inputs.mode }}
+          _UPLOAD_PD: ${{ inputs.upload_pixeldrain }}
+          _NOTIFY_TG: ${{ inputs.notify_telegram }}
+          _OVERSIZED: ${{ inputs.allow_oversized_final }}
+          _PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+          _TG_BOT_TOKEN: ${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}
+          _TG_CHAT_ID: ${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}
+          _GH_REPOSITORY: ${{ github.repository }}
+          _GH_RUN_ID: ${{ github.run_id }}
+          _GH_RUN_NUMBER: ${{ github.run_number }}
+          _GH_ACTOR: ${{ github.actor }}
+          _GH_REF_NAME: ${{ github.ref_name }}
+          _GH_SHA: ${{ github.sha }}
+          _GH_SERVER_URL: ${{ github.server_url }}
         run: |
-          # Select app, volume, and API token based on server_id
-          if [ "${{ inputs.server_id }}" = "2" ]; then
-            FLY_APP="mezo-snapdragon-builder-2"
-            FLY_VOLUME="mezo_snapdragon_data_2"
-            export FLY_API_TOKEN="${{ secrets.FLY_SNAPDRAGON_API_TOKEN_2 }}"
+          set -euo pipefail
+
+          # ── Select app/volume/token based on server_id ───────────────────────
+          if [ "${_SERVER_ID}" = "2" ]; then
+            APP_NAME="mezo-snapdragon-builder-2"
+            BASE_VOLUME_NAME="mezo_snapdragon_data_2"
+            export FLY_API_TOKEN="${_FLY_API_TOKEN_2}"
           else
-            FLY_APP="mezo-snapdragon-builder-1"
-            FLY_VOLUME="mezo_snapdragon_data"
-            export FLY_API_TOKEN="${{ secrets.FLY_SNAPDRAGON_API_TOKEN }}"
+            APP_NAME="mezo-snapdragon-builder-1"
+            BASE_VOLUME_NAME="mezo_snapdragon_data"
+            # FLY_API_TOKEN already set from env above
+          fi
+          REGION="fra"
+          MOUNT_PATH="/mnt/mezo_data"
+
+          # ── Helper: check if flyctl output indicates a capacity error ────────
+          _is_capacity_error() {
+            grep -qi \
+              "insufficient resources\|no capacity\|not enough capacity\|failed to place\|no host available\|could not reserve" \
+              "$1" 2>/dev/null
+          }
+
+          # ── Helper: run flyctl machine run with given CPUs/RAM/volume ────────
+          _fly_machine_run() {
+            local cpus="$1" mem="$2" vol_id="$3"
+            echo "[fly] Starting ROM builder machine (CPUs=${cpus} RAM=${mem}MB volume=${vol_id})..."
+            flyctl machine run . \
+              --app "$APP_NAME" \
+              --region "$REGION" \
+              --vm-cpu-kind performance \
+              --vm-cpus "$cpus" \
+              --vm-memory "$mem" \
+              --volume "${vol_id}:${MOUNT_PATH}" \
+              --env SOC=snapdragon \
+              --env TG_SOC=snapdragon \
+              --env "ROM_URL=${_ROM_URL}" \
+              --env "STYLE=${_STYLE}" \
+              --env "MODE=${_MODE}" \
+              --env "UPLOAD_PIXELDRAIN=${_UPLOAD_PD}" \
+              --env "NOTIFY_TELEGRAM=${_NOTIFY_TG}" \
+              --env "ALLOW_OVERSIZED_FINAL=${_OVERSIZED}" \
+              --env "PIXELDRAIN_API_KEY=${_PIXELDRAIN_API_KEY}" \
+              --env "TELEGRAM_BOT_TOKEN=${_TG_BOT_TOKEN}" \
+              --env "TELEGRAM_CHAT_ID=${_TG_CHAT_ID}" \
+              --env "TELEGRAM_SNAPDRAGON_BOT_TOKEN=${_TG_BOT_TOKEN}" \
+              --env "TELEGRAM_SNAPDRAGON_CHAT_ID=${_TG_CHAT_ID}" \
+              --env "GITHUB_REPOSITORY=${_GH_REPOSITORY}" \
+              --env "GITHUB_RUN_ID=${_GH_RUN_ID}" \
+              --env "GITHUB_RUN_NUMBER=${_GH_RUN_NUMBER}" \
+              --env "GITHUB_ACTOR=${_GH_ACTOR}" \
+              --env "GITHUB_REF_NAME=${_GH_REF_NAME}" \
+              --env "GITHUB_SHA=${_GH_SHA}" \
+              --env "GITHUB_SERVER_URL=${_GH_SERVER_URL}" \
+              --env "GITHUB_WORKFLOW=MEZO Fly Snapdragon" \
+              --env "MEZO_BACKEND=Fly.io" \
+              --env "SERVER_ID=${_SERVER_ID}" \
+              --env "GITHUB_RUN_URL=${_GH_SERVER_URL}/${_GH_REPOSITORY}/actions/runs/${_GH_RUN_ID}" \
+              --rm
+          }
+
+          # ── Step 1: destroy old builder machines attached to target volumes ──
+          echo "[fly] Checking for old builder machines (app=$APP_NAME)..."
+          ALL_VOLUMES=$(flyctl volumes list --app "$APP_NAME" --json 2>/dev/null || echo "[]")
+          TARGET_VOL_IDS=$(echo "$ALL_VOLUMES" | \
+            jq -r --arg n "$BASE_VOLUME_NAME" '[.[] | select(.name == $n)] | .[].id' \
+            2>/dev/null || echo "")
+
+          if [ -n "$TARGET_VOL_IDS" ]; then
+            MACHINES_JSON=$(flyctl machines list --app "$APP_NAME" --json 2>/dev/null || echo "[]")
+            while IFS= read -r vol_id; do
+              [ -z "$vol_id" ] && continue
+              MACHINE_ID=$(echo "$MACHINES_JSON" | jq -r --arg vid "$vol_id" \
+                '.[] | select(.config.mounts != null) |
+                 select(any(.config.mounts[]; .volume == $vid)) | .id' \
+                2>/dev/null | head -1 || echo "")
+              if [ -n "$MACHINE_ID" ]; then
+                echo "[fly] Found old builder machine $MACHINE_ID attached to volume $vol_id — destroying..."
+                flyctl machines destroy "$MACHINE_ID" --app "$APP_NAME" --force 2>&1 || \
+                  echo "[fly] WARN: could not destroy machine $MACHINE_ID (may already be gone)"
+              fi
+            done <<< "$TARGET_VOL_IDS"
+            echo "[fly] Waiting 5s for volume release..."
+            sleep 5
           fi
 
-          flyctl machine run . \
-            --app "$FLY_APP" \
-            --region fra \
-            --vm-cpu-kind performance \
-            --vm-cpus "${{ inputs.VM_CPUS }}" \
-            --vm-memory "${{ inputs.VM_MEMORY }}" \
-            --volume "${FLY_VOLUME}:/mnt/mezo_data" \
-            --env SOC=snapdragon \
-            --env TG_SOC=snapdragon \
-            --env "ROM_URL=${{ inputs.rom_url }}" \
-            --env "STYLE=${{ inputs.style }}" \
-            --env "MODE=${{ inputs.mode }}" \
-            --env "UPLOAD_PIXELDRAIN=${{ inputs.upload_pixeldrain }}" \
-            --env "NOTIFY_TELEGRAM=${{ inputs.notify_telegram }}" \
-            --env "ALLOW_OVERSIZED_FINAL=${{ inputs.allow_oversized_final }}" \
-            --env "PIXELDRAIN_API_KEY=${{ secrets.PIXELDRAIN_API_KEY }}" \
-            --env "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}" \
-            --env "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}" \
-            --env "TELEGRAM_SNAPDRAGON_BOT_TOKEN=${{ secrets.TELEGRAM_SNAPDRAGON_BOT_TOKEN }}" \
-            --env "TELEGRAM_SNAPDRAGON_CHAT_ID=${{ secrets.TELEGRAM_SNAPDRAGON_CHAT_ID }}" \
-            --env "GITHUB_REPOSITORY=${{ github.repository }}" \
-            --env "GITHUB_RUN_ID=${{ github.run_id }}" \
-            --env "GITHUB_RUN_NUMBER=${{ github.run_number }}" \
-            --env "GITHUB_ACTOR=${{ github.actor }}" \
-            --env "GITHUB_REF_NAME=${{ github.ref_name }}" \
-            --env "GITHUB_SHA=${{ github.sha }}" \
-            --env "GITHUB_SERVER_URL=${{ github.server_url }}" \
-            --env "GITHUB_WORKFLOW=MEZO Fly Snapdragon" \
-            --env "MEZO_BACKEND=Fly.io" \
-            --env "SERVER_ID=${{ inputs.server_id }}" \
-            --env "GITHUB_RUN_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --rm
-          echo "[fly] Machine run finished with rc=$?"
+          # ── Step 2: resolve newest unattached volume ID ───────────────────────
+          echo "[fly] Resolving target volume..."
+          VOLUMES_JSON=$(flyctl volumes list --app "$APP_NAME" --json 2>/dev/null || echo "[]")
+          SELECTED_VOLUME_ID=$(echo "$VOLUMES_JSON" | jq -r \
+            --arg n "$BASE_VOLUME_NAME" --arg r "$REGION" \
+            '[.[] | select(.name == $n and .region == $r and .state == "created")] |
+             sort_by(.created_at) | last | .id // empty' \
+            2>/dev/null || echo "")
+
+          if [ -z "$SELECTED_VOLUME_ID" ] || [ "$SELECTED_VOLUME_ID" = "null" ]; then
+            echo "[fly] No unattached volume found — creating new volume: $BASE_VOLUME_NAME"
+            CREATE_OUT=$(flyctl volumes create "$BASE_VOLUME_NAME" \
+              --app "$APP_NAME" --region "$REGION" --size 500 --yes --json 2>/dev/null || echo "{}")
+            SELECTED_VOLUME_ID=$(echo "$CREATE_OUT" | jq -r '.id // empty' 2>/dev/null || echo "")
+            if [ -z "$SELECTED_VOLUME_ID" ] || [ "$SELECTED_VOLUME_ID" = "null" ]; then
+              echo "[fly] Re-listing after create..."
+              sleep 3
+              VOLUMES_JSON=$(flyctl volumes list --app "$APP_NAME" --json 2>/dev/null || echo "[]")
+              SELECTED_VOLUME_ID=$(echo "$VOLUMES_JSON" | jq -r \
+                --arg n "$BASE_VOLUME_NAME" --arg r "$REGION" \
+                '[.[] | select(.name == $n and .region == $r and .state == "created")] |
+                 sort_by(.created_at) | last | .id // empty' \
+                2>/dev/null || echo "")
+            fi
+          fi
+
+          if [ -z "$SELECTED_VOLUME_ID" ] || [ "$SELECTED_VOLUME_ID" = "null" ]; then
+            echo "::error::Could not find or create a usable volume for $APP_NAME"
+            exit 1
+          fi
+          echo "[fly] Selected volume: $SELECTED_VOLUME_ID (name=$BASE_VOLUME_NAME region=$REGION)"
+
+          # ── Step 3: machine run with capacity-fallback retry ─────────────────
+          TMP_LOG=$(mktemp)
+
+          # Attempt 1 — user-requested VM size
+          if _fly_machine_run "${_VM_CPUS}" "${_VM_MEMORY}" "${SELECTED_VOLUME_ID}" \
+               2>&1 | tee "$TMP_LOG"; then
+            echo "[fly] Machine run finished with rc=0"
+            exit 0
+          fi
+          if ! _is_capacity_error "$TMP_LOG"; then
+            echo "::error::Fly machine run failed (non-capacity error)."
+            cat "$TMP_LOG"; exit 1
+          fi
+
+          # Attempt 2 — smaller VM, same volume
+          echo "[fly] Capacity error on attempt 1. Retrying with smaller VM (4 CPUs / 32 GB)..."
+          if _fly_machine_run 4 32768 "${SELECTED_VOLUME_ID}" \
+               2>&1 | tee "$TMP_LOG"; then
+            echo "[fly] Machine run finished with rc=0"
+            exit 0
+          fi
+          if ! _is_capacity_error "$TMP_LOG"; then
+            echo "::error::Fly machine run failed (non-capacity error, attempt 2)."
+            cat "$TMP_LOG"; exit 1
+          fi
+
+          # Attempt 3 — scratch volume to try a different host
+          echo "[fly] Capacity error on attempt 2. Creating scratch volume..."
+          SCRATCH_NAME="${BASE_VOLUME_NAME}_${_GH_RUN_ID}"
+          SCRATCH_OUT=$(flyctl volumes create "$SCRATCH_NAME" \
+            --app "$APP_NAME" --region "$REGION" --size 500 --yes --json 2>/dev/null || echo "{}")
+          SCRATCH_ID=$(echo "$SCRATCH_OUT" | jq -r '.id // empty' 2>/dev/null || echo "")
+          if [ -z "$SCRATCH_ID" ] || [ "$SCRATCH_ID" = "null" ]; then
+            echo "::error::Could not create scratch volume for $APP_NAME"
+            cat "$TMP_LOG"; exit 1
+          fi
+          echo "[fly] Scratch volume: $SCRATCH_ID"
+
+          if _fly_machine_run 4 32768 "${SCRATCH_ID}" \
+               2>&1 | tee "$TMP_LOG"; then
+            echo "[fly] Machine run finished with rc=0"
+            exit 0
+          fi
+          if ! _is_capacity_error "$TMP_LOG"; then
+            echo "::error::Fly machine run failed (non-capacity error, attempt 3)."
+            cat "$TMP_LOG"; exit 1
+          fi
+
+          # Attempt 4 — minimum VM size
+          echo "[fly] Capacity error on attempt 3. Final attempt with minimum VM (2 CPUs / 32 GB)..."
+          if _fly_machine_run 2 32768 "${SCRATCH_ID}" \
+               2>&1 | tee "$TMP_LOG"; then
+            echo "[fly] Machine run finished with rc=0"
+            exit 0
+          fi
+
+          echo "::error::Fly builder startup failed after all 4 attempts."
+          echo "Reason: Fly.io has no capacity for the requested builder size or selected volume host."
+          echo "Action: retry later, use a smaller VM, or create a fresh volume in a different region."
+          cat "$TMP_LOG"
+          exit 1
