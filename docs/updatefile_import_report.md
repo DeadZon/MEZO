@@ -85,27 +85,53 @@ Xiaomi_NoLowEnd/update.sh
 
 ## Branding Replacements
 
-Only one file contained upstream branding text that required replacement:
+### Phase 1 — Initial import (commit afda749)
 
 **File: `Settings_ROMInformation/update.sh`**
 
 | Original | Replacement | Line(s) |
 |---|---|---|
-| `NothingsVN OpenSource` | `DeadZone` | 70 |
-| `MIUINT` | `DeadZone` | 23, 24, 25 |
-| `NothingsOS` | `DeadZone` | 68 |
+| `NothingsVN OpenSource` | `DeadZone` | 70 (simposcode property value) |
+| `MIUINT` | `DeadZone` | 23, 24, 25 (MIUI About Phone display tag) |
+| `NothingsOS` | `DeadZone` | 68 (version property value) |
 
-**Explanation:**
-- Line 70: `ro.nothings.simposcode=NothingsVN OpenSource $myversion` → property value uses ROM brand name
-- Lines 23-25: `sed` commands replace "MIUI"/"MIUI Pad"/"MIUI Fold" display text with the ROM tag; upstream used `MIUINT` (NothingsVN team tag), replaced with `DeadZone`
-- Line 68: `ro.nothings.version=NothingsOS $myversion` → property value uses ROM brand name
+### Phase 2 — Post-restore fix (commit after afda749)
 
-**Not replaced (intentional):**
-- `ro.nothings.` property key prefix — this is a system property key used by the ROM; changing it would break any code that reads this property. Only the VALUE was replaced, not the key.
+**Property keys — `Settings_ROMInformation/update.sh`**
 
-### File/Folder Name Branding
+| Original | Replacement | Lines |
+|---|---|---|
+| `ro.nothings.version` | `ro.deadzone.version` | 68 |
+| `ro.nothings.osversion` | `ro.deadzone.osversion` | 69 |
+| `ro.nothings.simposcode` | `ro.deadzone.simposcode` | 70 |
 
-No file or folder names contained upstream branding patterns (`NothingsVN`, `nothingsvn`, `EliteRom`, `HyperVN`, etc.). No renames were performed.
+**Property keys — `Settings_ROMInformation/getMiuiVersionInCard.ini`**
+
+| Original | Replacement |
+|---|---|
+| `ro.nothings.version` | `ro.deadzone.version` |
+
+**Property keys — `Settings_ROMInformation/getSimpleOSVersion.ini`**
+
+| Original | Replacement |
+|---|---|
+| `ro.nothings.simposcode` | `ro.deadzone.simposcode` |
+
+All three files are consistent: `update.sh` now writes `ro.deadzone.*` keys and the `.ini` smali patches read the same `ro.deadzone.*` keys.
+
+**File/folder renames — `Global/`**
+
+APK files had upstream `Nothings.` prefix in their filenames (visible when installed as overlays):
+
+| Original filename | New filename |
+|---|---|
+| `Nothings.MiuiSystemUIPlugin.apk` | `DeadZone.MiuiSystemUIPlugin.apk` |
+| `Nothings.MiuiSystemUI.apk` | `DeadZone.MiuiSystemUI.apk` |
+| `Nothings.HyperPhoneSystemUI.apk` | `DeadZone.HyperPhoneSystemUI.apk` |
+
+`Global/update.sh` references updated to match new filenames.
+
+**Note:** The internal APK package name (inside the binary) still contains the upstream package identifier — that requires rebuilding the APK from source, which is outside the scope of this import.
 
 ---
 
@@ -128,26 +154,24 @@ No hook changes were made.
 
 ---
 
-## Warnings
+## MEZO Local Modules Restored After Upstream Import
 
-### MEZO-specific modules removed
+The upstream `bin/modfile/UpdateFile` does not contain MEZO-specific modules. After the initial import (commit afda749) removed them, the following three modules were restored from backup to keep the existing Lite/Legend build pipeline and checks working:
 
-The previous MEZO `bin/modfile/UpdateFile` contained three MEZO-specific modules that **do not exist in the upstream** and were removed when the folder was replaced:
+| Module | Status | Purpose |
+|---|---|---|
+| `DeadZone_FrameworkPatcher/` | **Restored** | Compatibility wrapper for framework patches (now handled by Lite style engine; exits 0) |
+| `DeadZone_JarMods/` | **Restored** | Unified JAR mod installer (feature-flagged; exits 0 unless `ENABLE_DEADZONE_JAR_MODS=true`) |
+| `DeadZone_KaoriosToolbox/` | **Restored** | Compatibility wrapper for Kaorios Toolbox (now handled by Lite style engine; exits 0) |
 
-| Removed module | Backed up at |
-|---|---|
-| `DeadZone_FrameworkPatcher/` | `C:\Users\hyper\Desktop\backup_MEZO_UpdateFile_20260608\DeadZone_FrameworkPatcher\` |
-| `DeadZone_JarMods/` | `C:\Users\hyper\Desktop\backup_MEZO_UpdateFile_20260608\DeadZone_JarMods\` |
-| `DeadZone_KaoriosToolbox/` | `C:\Users\hyper\Desktop\backup_MEZO_UpdateFile_20260608\DeadZone_KaoriosToolbox\` |
+These modules are MEZO-local additions not present in the upstream repository. They are discovered automatically by `insupdate.sh` via `find ... -name "*.sh"` and run alongside the upstream modules. No manual hook wiring was added.
 
-**Affected MEZO checks/tests that will now fail:**
+**MEZO checks/tests that depend on these modules (now passing):**
 - `bin/checks/check_framework_patcher.py` — checks for `UpdateFile/DeadZone_FrameworkPatcher/install.sh`
 - `bin/checks/check_jar_patch_engine.py` — checks for `UpdateFile/DeadZone_JarMods/install.sh`
 - `bin/checks/check_kaorios_assets.py` — checks for `UpdateFile/DeadZone_KaoriosToolbox/install.sh`
-- `bin/checks/check_kaorios_style_enabled.py` — checks for both `insupdate.sh` and `DeadZone_KaoriosToolbox/install.sh`
+- `bin/checks/check_kaorios_style_enabled.py` — checks for `insupdate.sh` and `DeadZone_KaoriosToolbox/install.sh`
 - `bin/tests/test_lite_style.py` — checks for `DeadZone_FrameworkPatcher/install.sh` and `DeadZone_KaoriosToolbox/install.sh`
-
-**Action required:** These MEZO-specific modules should be added back to the new UpdateFile from the backup, or the checks should be updated. This import task does not add integration hooks automatically.
 
 ---
 
@@ -155,7 +179,7 @@ The previous MEZO `bin/modfile/UpdateFile` contained three MEZO-specific modules
 
 ### UpdateFile shell scripts
 
-All 22 shell scripts passed `bash -n` syntax check: **PASS**
+All 25 shell scripts (22 upstream + 3 MEZO-local) passed `bash -n` syntax check: **PASS**
 
 ### Root shell scripts (unchanged, verified unmodified)
 
