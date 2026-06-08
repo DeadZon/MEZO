@@ -160,7 +160,11 @@ else
 fi
 unset _DZ_STYLE_ID _DZ_STYLE_DIR _DZ_STYLE_SCRIPT
 
-bash $work_dir/bin/package/patchpackage.sh
+if [ "${ENABLE_DEADZONE_PACKAGE_PATCHES:-true}" = "true" ]; then
+    WORK_DIR="$work_dir" TOOLS_DIR="$work_dir/bin/apktool" bash "$work_dir/bin/package/patchpackage.sh"
+else
+    echo "[package] ENABLE_DEADZONE_PACKAGE_PATCHES=false — skipping patchpackage.sh"
+fi
 
 find "$work_dir/build/baserom/images/" -exec touch -t 200901010000.00 {} + 2> /dev/null || true
 
