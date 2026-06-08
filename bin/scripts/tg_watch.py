@@ -110,10 +110,12 @@ def _is_force(line: str) -> bool:
 def run(log_file: Path, initial_stage: str) -> None:
     STOP_FILE.unlink(missing_ok=True)
 
-    running       = [True]
-    current_stage = initial_stage
+    running        = [True]
+    current_stage  = initial_stage
     last_heartbeat = time.time()
-    file_pos      = 0
+    file_pos       = 0
+    _last_line     = ""       # for consecutive-duplicate suppression
+    _dup_count     = 0        # how many times the current line repeated
 
     def _handle_signal(sig: int, frame: object) -> None:
         running[0] = False
@@ -141,6 +143,24 @@ def run(log_file: Path, initial_stage: str) -> None:
                     line = raw.rstrip()
                     if not line:
                         continue
+
+                    # ── Consecutive-duplicate suppression ─────────────────────
+                    # If the same line repeats, collapse it into a count suffix
+                    # and only forward once. Reset on any different line.
+                    if line == _last_line:
+                        _dup_count += 1
+                        if _dup_count == 1:
+                            # First repeat: replace buffer entry with "×2" suffix
+                            collapsed = f"{line} ×2"
+                            try:
+                                tg.push_log_line(collapsed)
+                            except Exception:
+                                pass
+                        # Subsequent identical repeats: skip entirely
+                        continue
+                    else:
+                        _last_line = line
+                        _dup_count = 0
 
                     # Advance stage if a known marker is found
                     new_stage = _map_stage(line)

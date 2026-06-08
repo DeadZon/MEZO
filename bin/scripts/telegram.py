@@ -318,9 +318,9 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
         (None if _file_device == "devicecode" else _file_device) or
         "Detecting…"
     )
-    rom_ver   = dev.get("rom") or "—"
+    rom_ver   = dev.get("rom") or os.environ.get("ROM_VERSION") or "—"
     android   = dev.get("ver") or ""
-    rom_os    = dev.get("os") or dev.get("ostype") or "HyperOS"
+    rom_os    = dev.get("os") or dev.get("ostype") or os.environ.get("OS_VERSION") or "HyperOS"
     os_label  = f"{rom_os} / Android {android}" if android else rom_os
     style     = _get_style()
     sha       = gh.get("sha") or "—"

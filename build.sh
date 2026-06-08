@@ -53,8 +53,14 @@ mkdir -p build/baserom/images/
 # Extract partitions
 if [[ ${baserom_type} == 'payload' ]]; then
     unpack "Extracting files payload.bin..."
-    unzip ${baserom} payload.bin -d build/baserom >/dev/null 2>&1 || error "Extracting payload.bin error"
-    unpack "File payload.bin extracted."
+    unzip ${baserom} payload.bin -d build/baserom >/dev/null 2>&1
+    _payload_rc=$?
+    if [ -s "build/baserom/payload.bin" ]; then
+        unpack "File payload.bin extracted."
+    else
+        error "Extracting payload.bin failed (rc=${_payload_rc}, file missing or empty)"
+        exit 1
+    fi
 elif [[ ${baserom_type} == 'br' ]];then
     unpack "Extracting files *.new.dat.br"
     unzip ${baserom} -d build/baserom >/dev/null 2>&1 || error "Extracting new.dat.br error"
@@ -89,7 +95,7 @@ fi
 
 if [[ ${baserom_type} == 'payload' ]]; then
     unpack "Unpacking payload.bin"
-    payload-dumper-go -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || error "Unpacking payload.bin failed"    
+    payload-dumper-go -o build/baserom/images/ build/baserom/payload.bin >/dev/null 2>&1 || { error "Unpacking payload.bin failed"; exit 1; }
 elif [[ ${baserom_type} == 'br' ]];then
     super_list=$(cat build/baserom/dynamic_partitions_op_list | grep "add " | awk '{ print $2 }')
     unpack "Unpacking new.dat.br"

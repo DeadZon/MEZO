@@ -45,6 +45,61 @@ export TG_SOC="${SOC:-mtk}"
 export STYLE="${STYLE:-Lite}"
 export MEZO_BACKEND="${MEZO_BACKEND:-Fly.io}"
 
+# ── Early ROM info detection from ROM_URL ─────────────────────────────────────
+# Runs before telegram.py start so the live card shows real device/ROM, not
+# "Detecting…". build.sh will also write the ddevice files later (authoritative),
+# but we pre-populate them here so the initial Telegram card is correct.
+_detect_early_rom_info() {
+    local url="${ROM_URL:-}"
+    local fname
+    fname=$(basename "${url%%\?*}" 2>/dev/null || echo "")
+
+    # Device codename — match "codename-ota_full-" or "codename_images_"
+    local codename=""
+    if [[ "$fname" =~ ^([a-z][a-z0-9_]+)[-_](ota_full|images|global|fastboot|recovery) ]]; then
+        codename="${BASH_REMATCH[1]}"
+    fi
+
+    # ROM version — OS3.x.x.x.XXXXX or V14.x.x.x.XXXXX
+    local rom_ver=""
+    if [[ "$fname" =~ (OS[123]\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z0-9]+) ]]; then
+        rom_ver="${BASH_REMATCH[1]}"
+    elif [[ "$fname" =~ (V[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\.[A-Z0-9]+) ]]; then
+        rom_ver="${BASH_REMATCH[1]}"
+    fi
+
+    # OS label from ROM version prefix
+    local os_ver=""
+    if   [[ "$rom_ver" == OS3* ]]; then os_ver="OS3"
+    elif [[ "$rom_ver" == OS2* ]]; then os_ver="OS2"
+    elif [[ "$rom_ver" == OS1* ]]; then os_ver="OS1"
+    elif [[ "$rom_ver" == V*   ]]; then os_ver="MIUI"
+    fi
+
+    # Export env vars (telegram.py reads these as fallback)
+    if [ -z "${DEVICE_CODENAME:-}" ] && [ -n "$codename" ]; then
+        export DEVICE_CODENAME="$codename"
+        export CODENAME="$codename"
+    fi
+    [ -n "$rom_ver" ] && export ROM_VERSION="$rom_ver"
+    [ -n "$os_ver"  ] && export OS_VERSION="$os_ver"
+
+    # Pre-populate ddevice files so telegram.py._read_device() finds them
+    mkdir -p bin/ddevice
+    if [ -n "$codename" ] && [ ! -s "bin/ddevice/device_f.txt" ]; then
+        echo "$codename" > bin/ddevice/device_f.txt
+    fi
+    if [ -n "$rom_ver" ] && [ ! -s "bin/ddevice/base_rom_code.txt" ]; then
+        echo "$rom_ver" > bin/ddevice/base_rom_code.txt
+    fi
+    if [ -n "$os_ver" ] && [ ! -s "bin/ddevice/rom_os.txt" ]; then
+        echo "$os_ver" > bin/ddevice/rom_os.txt
+    fi
+
+    echo "[PRE-DETECT] Device=${codename:-unknown}  ROM=${rom_ver:-unknown}  OS=${os_ver:-unknown}"
+}
+_detect_early_rom_info
+
 # ── sudo handling — root in Docker runs commands directly ─────────────────────
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=""
