@@ -521,8 +521,7 @@ def update_stage(stage_id: str, status: str, action: str = "", *, force: bool = 
     if status == "RUN":
         state["current_stage_id"]    = stage_id
         state["current_stage_label"] = label
-        if action:
-            state["current_action"] = action
+        state["current_action"] = action  # always reset; clears stale action from prior stage
 
     if status in ("FAIL", "ERROR"):
         state["failed_stage"] = stage_id

@@ -71,6 +71,11 @@ _MARKER_STAGE: list[tuple[str, str]] = [
     ("PixelDrain",                 "upload_pixeldrain"),
 ]
 
+# Lines that are harmless noise — silently dropped before any processing.
+_SUPPRESS_SUBSTRINGS = (
+    "Invalid sparse file format at header magic",
+)
+
 # Lines that bypass the rate-limit and trigger an immediate Telegram edit.
 _FORCE_KEYWORDS = (
     "[ERROR]",
@@ -142,6 +147,10 @@ def run(log_file: Path, initial_stage: str) -> None:
                 for raw in new_lines:
                     line = raw.rstrip()
                     if not line:
+                        continue
+
+                    # ── Suppress harmless noise ───────────────────────────────
+                    if any(s in line for s in _SUPPRESS_SUBSTRINGS):
                         continue
 
                     # ── Consecutive-duplicate suppression ─────────────────────

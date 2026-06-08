@@ -68,12 +68,12 @@ elif echo "$device_code" | grep -q 'RUGlobal'; then
     DEVICE_TYPE="RUGlobal"
 elif echo "$device_code" | grep -q 'JPGlobal'; then
     DEVICE_TYPE="JPGlobal"
-elif echo "$device_code" | grep -q 'Global'; then
-    DEVICE_TYPE="Global"
 elif echo "$device_code" | grep -q 'TWGlobal'; then
     DEVICE_TYPE="TWGlobal"
 elif echo "$device_code" | grep -q 'TRGlobal'; then
     DEVICE_TYPE="TRGlobal"
+elif echo "$device_code" | grep -q 'Global'; then
+    DEVICE_TYPE="Global"
 else
     DEVICE_TYPE="China"
 fi

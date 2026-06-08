@@ -340,12 +340,14 @@ if [ "$OVERALL_EXIT" -eq 0 ] \
     fi
 fi
 
-# ── Generate full mod report ──────────────────────────────────────────────────
-echo ""
-echo "[REPORT] Generating full mod report..."
-$SUDO python3 bin/scripts/deadzone_full_mod_report.py \
-    --work-dir "$(pwd)" \
-    --style "${STYLE:-Plus}" 2>/dev/null || true
+# ── Generate full mod report (only after successful ZIP) ──────────────────────
+if [ "$OVERALL_EXIT" -eq 0 ]; then
+    echo ""
+    echo "[REPORT] Generating full mod report..."
+    $SUDO python3 bin/scripts/deadzone_full_mod_report.py \
+        --work-dir "$(pwd)" \
+        --style "${STYLE:-Plus}" 2>/dev/null || true
+fi
 
 # ── Final Telegram status ─────────────────────────────────────────────────────
 BUILD_END=$(date +%s)

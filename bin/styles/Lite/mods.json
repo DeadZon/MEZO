@@ -121,7 +121,19 @@
       "args": ["--style", "lite"],
       "enabled": true,
       "required": false,
+      "env_flag": "ENABLE_POCO_MIUIHOME_SPOOFING",
       "description": "Detects POCO brand ROM via ro.product.vendor.brand=POCO in vendor/odm prop files and replaces the value with Redmi so MiuiHome launcher loads instead of POCO Launcher. Skipped automatically on non-POCO ROMs."
+    },
+    {
+      "id": "product_data_app_to_app_migration",
+      "name": "product/data-app → product/app Migration",
+      "source_stage": "product_partition",
+      "python_entry": "bin/scripts/product_data_app_to_app_migration.py",
+      "args": ["--style", "lite"],
+      "enabled": true,
+      "required": false,
+      "env_flag": "ENABLE_PRODUCT_DATA_APP_MIGRATION",
+      "description": "Moves apps from product/data-app/ into product/app/ so they are treated as preinstalled system apps instead of user-data apps. Skipped automatically when product/data-app/ is absent."
     }
   ]
 }

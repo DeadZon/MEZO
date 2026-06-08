@@ -67,7 +67,7 @@ mods "Add ROM Information To HyperOS"
   mods "Updating build.prop"
   echo "ro.deadzone.version=DeadZone $myversion | $final_version" >> $my
   echo "ro.deadzone.osversion=${simposcode}.${build_date}" >> $my
-  echo "ro.deadzone.simposcode=DeadZone $myversion  " >> $my
+  echo "ro.deadzone.simposcode=DeadZone By MEZO $myversion  " >> $my
 
   mods "Rebuild..."
   Settings=$(basename $isSettings)

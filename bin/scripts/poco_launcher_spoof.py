@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -218,6 +219,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work-dir", default=str(WORK_DIR), help="Project root directory")
     parser.add_argument("--style",    default="lite",         help="Active build style")
     args = parser.parse_args(argv)
+
+    enabled = os.environ.get("ENABLE_POCO_MIUIHOME_SPOOFING", "true").lower()
+    if enabled not in ("1", "true", "yes"):
+        print("[POCO_SPOOF] ENABLE_POCO_MIUIHOME_SPOOFING=false — skipped")
+        return 0
 
     work_dir = Path(args.work_dir).resolve()
     reports_dir = work_dir / "bin" / "output" / "reports"
