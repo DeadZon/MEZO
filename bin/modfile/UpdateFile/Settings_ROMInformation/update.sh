@@ -20,9 +20,9 @@ mods "Add ROM Information To MIUI"
   $APKEDITOR d -i $isSettings -o $WORK_DIR/apk_temp/isSettings.apk.out >/dev/null 2>&1
   p1=$(find "$WORK_DIR/apk_temp/isSettings.apk.out" -type f -name MiuiAboutPhoneUtils.smali)
 
-  sed -i "s/MIUI /MIUINT $myversion | /g" $p1
-  sed -i "s/MIUI Pad /MIUINT $myversion | /g" $p1
-  sed -i "s/MIUI Fold /MIUINT $myversion | /g" $p1
+  sed -i "s/MIUI /DeadZone $myversion | /g" $p1
+  sed -i "s/MIUI Pad /DeadZone $myversion | /g" $p1
+  sed -i "s/MIUI Fold /DeadZone $myversion | /g" $p1
 
   mods "Rebuild..."
   Settings=$(basename $isSettings)
@@ -65,9 +65,9 @@ mods "Add ROM Information To HyperOS"
   $repS $tar4 $p1
 
   mods "Updating build.prop"
-  echo "ro.deadzone.version=DeadZone $myversion | $final_version" >> $my
-  echo "ro.deadzone.osversion=${simposcode}.${build_date}" >> $my
-  echo "ro.deadzone.simposcode=DeadZone By MEZO $myversion  " >> $my
+  echo "ro.nothings.version=DeadZone $myversion | $final_version" >> $my
+  echo "ro.nothings.osversion=${simposcode}.${build_date}" >> $my
+  echo "ro.nothings.simposcode=DeadZone $myversion  " >> $my
 
   mods "Rebuild..."
   Settings=$(basename $isSettings)
