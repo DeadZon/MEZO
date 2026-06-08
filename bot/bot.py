@@ -407,23 +407,35 @@ def _poll_for_run_url(
 
 
 def format_github_error(status_code: int, response_body: dict, workflow_file: str) -> str:
-    hints = {
+    # Internal hints — only logged, never sent to Telegram
+    _hints = {
         0:   "Network error — check bot connectivity.",
         401: "Token is invalid or expired.",
         403: "Token lacks 'workflow' or 'actions' permission.",
         404: "Workflow file not found, or repo access is denied.",
         422: "Invalid workflow inputs, or ref does not exist.",
     }
-    hint     = hints.get(status_code, "Unexpected error — check token and repo config.")
-    body_str = json.dumps(response_body, indent=2)[:400] if response_body else "(empty)"
+    log.error(
+        "GitHub dispatch error: workflow=%s status=%s hint=%s body=%s",
+        workflow_file, status_code,
+        _hints.get(status_code, "unexpected"),
+        str(response_body)[:200],
+    )
+    # Public-safe message — no repo, workflow, ref, or GitHub URLs
+    if status_code == 0:
+        reason = "Network error — the builder could not be reached."
+    elif status_code in (401, 403):
+        reason = "Authorization error. Contact the repository owner."
+    elif status_code == 404:
+        reason = "Build configuration not found. Contact the repository owner."
+    elif status_code == 422:
+        reason = "Invalid build inputs. Check your style and mode selection."
+    else:
+        reason = f"Unexpected error (code {status_code}). Contact the repository owner."
     return (
-        f"*حصل خطأ في تشغيل الـ Workflow.*\n\n"
-        f"Repository: `{REPO_OWNER}/{REPO_NAME}`\n"
-        f"Workflow: `{workflow_file}`\n"
-        f"Ref: `{REPO_REF}`\n"
-        f"HTTP: `{status_code}`\n\n"
-        f"*GitHub response:*\n```{body_str}```\n\n"
-        f"*Hint:* {hint}"
+        f"❌ *Build startup failed.*\n\n"
+        f"Reason: {reason}\n\n"
+        f"Project DeadZone By MEZO Enjoy"
     )
 
 
@@ -640,29 +652,24 @@ def _do_dispatch(chat_id: int, user_id: int, edit_msg_id: int | None = None) -> 
     if status_code == 204:
         srv_line = f"\n🖥 Server: `{inputs['server_id']}`" if "server_id" in inputs else ""
 
-        # Poll for the GitHub Actions run URL (up to 30s)
+        # Poll internally for run status — never exposed to Telegram
         run_url = _poll_for_run_url(workflow_file, dispatch_time, max_wait=30)
-        run_url_line = (
-            f"\n🔗 GitHub run: {run_url}"
-            if run_url
-            else "\n🔗 GitHub run: لم يُعثر عليه بعد — تحقق من Actions"
-        )
+        log.info("Dispatch OK: workflow=%s style=%s run_found=%s", workflow_file, sess["style"], bool(run_url))
+
+        is_fly = sess["backend"] == "fly"
+        waking = "Waking up Fly.io builder..." if is_fly else "Build started."
 
         text = (
-            f"✅ *Workflow triggered successfully.*\n\n"
-            f"Repository: `{REPO_OWNER}/{REPO_NAME}`\n"
-            f"Workflow: `{workflow_file}`\n"
-            f"Ref: `{REPO_REF}`\n"
+            f"✅ *Build request accepted.*\n\n"
             f"🎨 Style: `{sess['style']}`\n"
             f"⚙️ Mode: `{sess['mode']}`\n"
             f"🚀 Backend: {b_label}"
-            f"{srv_line}"
-            f"{run_url_line}\n\n"
-            f"{waking_line}\n\n"
+            f"{srv_line}\n\n"
+            f"{waking}\n\n"
             f"تمام، بدأت أشغل البيلد 🚀\n"
-            f"هتوصلك إشعارات اللايف من نظام البناء نفسه."
+            f"هتوصلك إشعارات اللايف من نظام البناء نفسه.\n\n"
+            f"Project DeadZone By MEZO Enjoy"
         )
-        log.info("Dispatch OK: workflow=%s style=%s run_url=%s", workflow_file, sess["style"], run_url)
     else:
         text = format_github_error(status_code, response_body, workflow_file)
         log.error("Dispatch FAILED: workflow=%s status=%s body=%s", workflow_file, status_code, response_body)

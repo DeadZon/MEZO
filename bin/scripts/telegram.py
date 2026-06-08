@@ -323,7 +323,6 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
     rom_os    = dev.get("os") or dev.get("ostype") or os.environ.get("OS_VERSION") or "HyperOS"
     os_label  = f"{rom_os} / Android {android}" if android else rom_os
     style     = _get_style()
-    sha       = gh.get("sha") or "—"
 
     elapsed     = _elapsed_str(state.get("started_at", time.time()))
     stage_id    = state.get("current_stage_id", "")
@@ -353,7 +352,6 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
     out.append(f"💿 ROM:     {rom_ver}")
     out.append(f"🤖 OS:      {os_label}")
     out.append(f"🎨 Style:   {style}")
-    out.append(f"🔖 Commit:  {sha}")
     out.append("")
 
     # ── Status block ──────────────────────────────────────────────────────────

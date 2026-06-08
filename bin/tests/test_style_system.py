@@ -292,9 +292,11 @@ class TestInsmodInheritance(unittest.TestCase):
         self.assertIn("Plus/insmod.sh", content)
         self.assertNotIn("Stable/insmod.sh", content)
 
-    def test_stable_delegates_to_plus(self):
+    def test_stable_delegates_to_lite(self):
         content = self._read("Stable")
-        self.assertIn("Plus/insmod.sh", content)
+        # Stable is now a compat alias for Lite, not Plus
+        self.assertIn("Lite/insmod.sh", content)
+        self.assertNotIn("Plus/insmod.sh", content)
 
     def test_stable_is_compat_wrapper(self):
         content = self._read("Stable")
