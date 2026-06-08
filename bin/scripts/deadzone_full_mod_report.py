@@ -465,6 +465,7 @@ def write_full_report(
     dz_style: str = "",
     final_zip: str = "",
     pixeldrain_url: str = "",
+    output_name: str = "deadzone_full_mod_report",
 ) -> None:
     reports_dir = Path(reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -482,8 +483,8 @@ def write_full_report(
         pixeldrain_url=full.get("pixeldrain_url", ""),
     )
 
-    txt_path  = reports_dir / "deadzone_full_mod_report.txt"
-    json_path = reports_dir / "deadzone_full_mod_report.json"
+    txt_path  = reports_dir / f"{output_name}.txt"
+    json_path = reports_dir / f"{output_name}.json"
 
     txt_path.write_text(txt, encoding="utf-8")
     json_path.write_text(json.dumps(full, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -358,6 +358,54 @@ def github_dispatch_workflow(workflow_file: str, inputs: dict) -> tuple:
         return 0, {"error": str(exc)}
 
 
+def _poll_for_run_url(
+    workflow_file: str,
+    dispatch_time: float,
+    max_wait: int = 30,
+) -> str:
+    """Poll GitHub Actions API to find the run URL for a just-dispatched workflow.
+
+    Returns run URL string if found within max_wait seconds, else empty string.
+    Does NOT print the token.
+    """
+    token = get_github_token()
+    if not token:
+        return ""
+
+    url = (
+        f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
+        f"/actions/workflows/{workflow_file}/runs"
+        f"?branch={REPO_REF}&event=workflow_dispatch&per_page=10"
+    )
+
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        time.sleep(3)
+        try:
+            resp = requests.get(url, headers=_github_headers(token), timeout=15)
+            if resp.status_code != 200:
+                continue
+            runs = resp.json().get("workflow_runs", [])
+            for run in runs:
+                created = run.get("created_at", "")
+                # created_at is ISO8601 UTC; compare roughly
+                try:
+                    import datetime as _dt
+                    ct = _dt.datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+                    if ct >= dispatch_time - 10:  # 10s tolerance
+                        run_id  = run.get("id", "")
+                        server  = "https://github.com"
+                        repo    = f"{REPO_OWNER}/{REPO_NAME}"
+                        if run_id:
+                            return f"{server}/{repo}/actions/runs/{run_id}"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return ""
+
+
 def format_github_error(status_code: int, response_body: dict, workflow_file: str) -> str:
     hints = {
         0:   "Network error — check bot connectivity.",
@@ -585,11 +633,21 @@ def _do_dispatch(chat_id: int, user_id: int, edit_msg_id: int | None = None) -> 
         else "Build started on GitHub Actions..."
     )
 
+    dispatch_time = time.time()
     log.info("Dispatching workflow=%s backend=%s inputs=%s", workflow_file, sess["backend"], inputs)
     status_code, response_body = github_dispatch_workflow(workflow_file, inputs)
 
     if status_code == 204:
         srv_line = f"\n🖥 Server: `{inputs['server_id']}`" if "server_id" in inputs else ""
+
+        # Poll for the GitHub Actions run URL (up to 30s)
+        run_url = _poll_for_run_url(workflow_file, dispatch_time, max_wait=30)
+        run_url_line = (
+            f"\n🔗 GitHub run: {run_url}"
+            if run_url
+            else "\n🔗 GitHub run: لم يُعثر عليه بعد — تحقق من Actions"
+        )
+
         text = (
             f"✅ *Workflow triggered successfully.*\n\n"
             f"Repository: `{REPO_OWNER}/{REPO_NAME}`\n"
@@ -598,12 +656,13 @@ def _do_dispatch(chat_id: int, user_id: int, edit_msg_id: int | None = None) -> 
             f"🎨 Style: `{sess['style']}`\n"
             f"⚙️ Mode: `{sess['mode']}`\n"
             f"🚀 Backend: {b_label}"
-            f"{srv_line}\n\n"
+            f"{srv_line}"
+            f"{run_url_line}\n\n"
             f"{waking_line}\n\n"
             f"تمام، بدأت أشغل البيلد 🚀\n"
             f"هتوصلك إشعارات اللايف من نظام البناء نفسه."
         )
-        log.info("Dispatch OK: workflow=%s style=%s", workflow_file, sess["style"])
+        log.info("Dispatch OK: workflow=%s style=%s run_url=%s", workflow_file, sess["style"], run_url)
     else:
         text = format_github_error(status_code, response_body, workflow_file)
         log.error("Dispatch FAILED: workflow=%s status=%s body=%s", workflow_file, status_code, response_body)

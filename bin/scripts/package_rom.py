@@ -2288,7 +2288,26 @@ def package() -> Path:
         sys.exit(1)
 
     # ── Generate windows_install_and_format_data.bat from actual images ──────────
-    region = _read("rom_os.txt") or "Global"
+    _raw_device_type = _read("device_type.txt") or ""
+    _raw_rom_version = _read("base_rom_code.txt") or ""
+    # Import rom_metadata for region parsing
+    try:
+        import importlib.util as _ilu
+        _rm_spec = _ilu.spec_from_file_location(
+            "rom_metadata",
+            str(Path(__file__).resolve().parent / "rom_metadata.py"),
+        )
+        _rm_mod = _ilu.module_from_spec(_rm_spec)
+        _rm_spec.loader.exec_module(_rm_mod)
+        if _raw_device_type and _raw_device_type.upper() not in ("OS1", "OS2", "OS3", "MIUI"):
+            region = _rm_mod.get_region_from_device_type(_raw_device_type)
+        elif _raw_rom_version:
+            _meta = _rm_mod.parse_rom_version(_raw_rom_version)
+            region = _meta.get("region_display") or _raw_device_type or "Global"
+        else:
+            region = _raw_device_type or "Global"
+    except Exception:
+        region = _raw_device_type if _raw_device_type and _raw_device_type.upper() not in ("OS1", "OS2", "OS3", "MIUI") else "Global"
     flash_cmds, skipped_pairs = _gen_install_bat(
         staging        = staging,
         available_imgs = available_imgs,

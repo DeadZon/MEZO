@@ -294,11 +294,22 @@ def main() -> None:
     results = run_style(style, project_root)
     _write_reports(results, style, project_root)
 
-    # Always generate the aggregate full mod report — even if optional mods failed
+    # Generate the pre-package aggregate report.
+    # The final report (with ZIP/PixelDrain info) is written by docker-entrypoint.sh
+    # and GitHub Actions workflows after packaging and upload complete.
     try:
         from deadzone_full_mod_report import write_full_report as _write_full_report
+        _reports_dir = project_root / "bin" / "output" / "reports"
+        # Write pre-package variant (marks it as early/incomplete)
         _write_full_report(
-            project_root / "bin" / "output" / "reports",
+            _reports_dir,
+            dz_style=style,
+            output_name="deadzone_full_mod_report_prepackage",
+        )
+        # Also write to main path so test suites that check for the file still pass.
+        # This will be overwritten by the final call after packaging.
+        _write_full_report(
+            _reports_dir,
             dz_style=style,
         )
     except Exception as _fmr_exc:

@@ -868,12 +868,16 @@ class TestIntegration:
         # fw_follower must be skipped (group deduplication)
         assert statuses.get("fw_follower") == "skipped"
 
-    def test_stable_delegates_to_plus(self):
-        """Test 29: Stable insmod.sh is a compat wrapper delegating to Plus."""
+    def test_stable_delegates_to_lite(self):
+        """Test 29: Stable insmod.sh is a compat alias for Lite (not Plus)."""
         if not STABLE_INSMOD.is_file():
             pytest.skip("Stable insmod.sh not present")
         content = STABLE_INSMOD.read_text(encoding="utf-8")
-        assert "Plus" in content, "Stable must delegate to Plus (compat wrapper)"
+        # Stable must resolve to Lite directly (not via Plus)
+        assert "Lite" in content, "Stable must delegate to Lite (compat alias)"
+        assert "delegating to Plus" not in content, (
+            "Stable must NOT delegate to Plus — it is a Lite alias"
+        )
 
     def test_legend_inherits_plus(self):
         """Test 30: Legend insmod.sh references Plus (not Stable)."""

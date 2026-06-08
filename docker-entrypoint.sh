@@ -107,6 +107,26 @@ else
     SUDO="sudo -E"
 fi
 
+# ── Python dependencies (needed early for telegram.py) ───────────────────────
+if [ -f requirements.txt ]; then
+    pip3 install --no-cache-dir -q -r requirements.txt 2>/dev/null || true
+fi
+
+# ── Telegram: build started — send BEFORE long swap setup so user sees live card immediately ──
+# This is intentionally early (before swap) so the bot is not silent for minutes.
+BUILD_START=$(date +%s)
+OVERALL_EXIT=0
+
+if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
+    if python3 bin/scripts/telegram.py start "${TG_SOC}" 2>/dev/null; then
+        echo "[telegram] Build start notification sent"
+    else
+        echo "[telegram] WARNING: failed to send build start notification (continuing)" >&2
+    fi
+else
+    echo "[telegram] missing credentials or disabled; live notification disabled"
+fi
+
 # ── Exit trap — catch unexpected failures before pipeline error handling ──────
 _NOTIFIED=0
 _on_exit() {
@@ -163,20 +183,6 @@ if [ ! -f "$SWAP_FILE" ]; then
 fi
 swapon "$SWAP_FILE" 2>/dev/null || true
 echo "[SWAP] Ready."
-
-# ── Python dependencies ───────────────────────────────────────────────────────
-if [ -f requirements.txt ]; then
-    pip3 install --no-cache-dir -q -r requirements.txt 2>/dev/null || true
-fi
-
-# ── Timing ────────────────────────────────────────────────────────────────────
-BUILD_START=$(date +%s)
-OVERALL_EXIT=0
-
-# ── Telegram: build started ───────────────────────────────────────────────────
-if [ "${NOTIFY_TELEGRAM:-false}" = "true" ]; then
-    $SUDO python3 bin/scripts/telegram.py start "${TG_SOC}" 2>/dev/null || true
-fi
 
 # ── Step 1: setup.sh ─────────────────────────────────────────────────────────
 echo ""

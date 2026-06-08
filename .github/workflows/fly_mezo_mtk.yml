@@ -60,6 +60,18 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_MTK_API_TOKEN }}
 
+      - name: Validate Fly token and inputs
+        run: |
+          if [ -z "${{ secrets.FLY_MTK_API_TOKEN }}" ]; then
+            echo "::error::FLY_MTK_API_TOKEN secret is not set. Cannot launch Fly machine."
+            exit 1
+          fi
+          if [ -z "${{ inputs.rom_url }}" ]; then
+            echo "::error::rom_url input is required but empty."
+            exit 1
+          fi
+          echo "[fly] Token present. App: mezo-mtk-builder. Volume: mezo_mtk_data."
+
       - name: Log build configuration
         run: |
           echo "============================================"
@@ -81,6 +93,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_MTK_API_TOKEN }}
         run: |
+          echo "[fly] Starting ROM builder machine..."
           flyctl machine run . \
             --app mezo-mtk-builder \
             --region fra \
@@ -110,4 +123,6 @@ jobs:
             --env "GITHUB_SERVER_URL=${{ github.server_url }}" \
             --env "GITHUB_WORKFLOW=MEZO Fly MTK" \
             --env "MEZO_BACKEND=Fly.io" \
+            --env "GITHUB_RUN_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --rm
+          echo "[fly] Machine run finished with rc=$?"

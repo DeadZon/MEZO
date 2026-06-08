@@ -68,6 +68,18 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_SNAPDRAGON_API_TOKEN }}
 
+      - name: Validate Fly token and inputs
+        run: |
+          if [ -z "${{ secrets.FLY_SNAPDRAGON_API_TOKEN }}" ]; then
+            echo "::error::FLY_SNAPDRAGON_API_TOKEN secret is not set. Cannot launch Fly machine."
+            exit 1
+          fi
+          if [ -z "${{ inputs.rom_url }}" ]; then
+            echo "::error::rom_url input is required but empty."
+            exit 1
+          fi
+          echo "[fly] Token present. App: mezo-snapdragon-builder-${{ inputs.server_id }}."
+
       - name: Log build configuration
         run: |
           if [ "${{ inputs.server_id }}" = "2" ]; then
@@ -138,4 +150,6 @@ jobs:
             --env "GITHUB_WORKFLOW=MEZO Fly Snapdragon" \
             --env "MEZO_BACKEND=Fly.io" \
             --env "SERVER_ID=${{ inputs.server_id }}" \
+            --env "GITHUB_RUN_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --rm
+          echo "[fly] Machine run finished with rc=$?"

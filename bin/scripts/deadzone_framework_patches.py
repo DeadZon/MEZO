@@ -1406,7 +1406,31 @@ def apply_stable_framework_patches(work_dir: Path) -> dict:
     If pre-decompiled *_unpacked/ dirs are absent, attempts to decompile
     the framework JARs first (using rom_patch_helpers + apktool).
     """
+    import os as _os
     work_dir = Path(work_dir).resolve()
+
+    # ── COREPATCH overlap guard ───────────────────────────────────────────────
+    # When bin/package/COREPATCH is active (ENABLE_DEADZONE_PACKAGE_PATCHES=true),
+    # the old framework/signature patch groups overlap with COREPATCH. Skip them
+    # unless the user has explicitly opted-in via ENABLE_LEGACY_* flags.
+    _corepatch_dir = work_dir / "bin" / "package" / "COREPATCH"
+    _pkg_patches_on = _os.environ.get("ENABLE_DEADZONE_PACKAGE_PATCHES", "true").lower() == "true"
+    _corepatch_active = _pkg_patches_on and _corepatch_dir.is_dir()
+
+    _legacy_sig    = _os.environ.get("ENABLE_LEGACY_SIGNATURE_BYPASS", "false").lower() == "true"
+    _legacy_fw     = _os.environ.get("ENABLE_LEGACY_FRAMEWORK_PATCHES", "false").lower() == "true"
+    _legacy_invoke = _os.environ.get("ENABLE_LEGACY_INVOKE_CUSTOM", "false").lower() == "true"
+
+    _skip_sig    = _corepatch_active and not _legacy_sig
+    _skip_fw     = _corepatch_active and not _legacy_fw
+    _skip_invoke = _corepatch_active and not _legacy_invoke
+
+    if _skip_sig:
+        print("[legacy-overlap] Skipping old signature_verification_bypass because bin/package/COREPATCH is active")
+    if _skip_fw:
+        print("[legacy-overlap] Skipping old framework_patches because bin/package/COREPATCH is active")
+    if _skip_invoke:
+        print("[legacy-overlap] Skipping old invoke_custom_handling because bin/package/COREPATCH is active")
 
     # Decompile JARs when unpacked dirs are missing
     decompile_outcomes = _decompile_framework_jars(work_dir)
@@ -1416,9 +1440,27 @@ def apply_stable_framework_patches(work_dir: Path) -> dict:
     bl_entries:   list[dict] = []
     msvc_entries: list[dict] = []
 
-    apply_signature_verification_bypass(work_dir, sig_entries)
-    apply_invoke_custom_handling(work_dir, ic_entries)
-    apply_fix_bootloop_a15(work_dir, bl_entries)
+    if not _skip_sig:
+        apply_signature_verification_bypass(work_dir, sig_entries)
+    else:
+        sig_entries = [{"target_file": "skipped", "found": False, "status": "skipped",
+                        "detail": "COREPATCH active — ENABLE_LEGACY_SIGNATURE_BYPASS=false",
+                        "error": None, "searched_paths": []}]
+
+    if not _skip_invoke:
+        apply_invoke_custom_handling(work_dir, ic_entries)
+    else:
+        ic_entries = [{"target_file": "skipped", "found": False, "status": "skipped",
+                       "detail": "COREPATCH active — ENABLE_LEGACY_INVOKE_CUSTOM=false",
+                       "error": None, "searched_paths": []}]
+
+    if not _skip_fw:
+        apply_fix_bootloop_a15(work_dir, bl_entries)
+    else:
+        bl_entries = [{"target_file": "skipped", "found": False, "status": "skipped",
+                       "detail": "COREPATCH active — ENABLE_LEGACY_FRAMEWORK_PATCHES=false",
+                       "error": None, "searched_paths": []}]
+
     apply_miui_services_cn_global_patches(work_dir, msvc_entries)
 
     # Rebuild JARs we decompiled

@@ -146,20 +146,20 @@ info "Done"
 # OS1/OS2/OS3/Universal/UpdateFile mods are now routed through the Lite style
 # engine (bin/scripts/style_mod_runner.py + bin/styles/Lite/mods.json).
 # All styles inherit Lite, so every style gets the full base mod set.
-_DZ_STYLE_ID="${DZ_STYLE_ID:-stable}"
+_DZ_STYLE_ID="${DZ_STYLE_ID:-${STYLE:-lite}}"
 case "${_DZ_STYLE_ID,,}" in
-    lite)   _DZ_STYLE_DIR="Lite"   ;;
-    stable) _DZ_STYLE_DIR="Stable" ;;
-    legend) _DZ_STYLE_DIR="Legend" ;;
-    ninja)  _DZ_STYLE_DIR="Ninja"  ;;
+    lite|stable|free) _DZ_STYLE_DIR="Lite"   ;;
+    plus)             _DZ_STYLE_DIR="Plus"   ;;
+    legend)           _DZ_STYLE_DIR="Legend" ;;
+    ninja)            _DZ_STYLE_DIR="Ninja"  ;;
     *)
-        echo "[STYLE] ERROR: Unsupported DeadZone style: ${_DZ_STYLE_ID}. Valid: lite, stable, legend, ninja"
+        echo "[STYLE] ERROR: Unsupported DeadZone style: ${_DZ_STYLE_ID}. Valid: lite, stable, free, plus, legend, ninja"
         exit 1
         ;;
 esac
 _DZ_STYLE_SCRIPT="$work_dir/bin/modfile/Styles/${_DZ_STYLE_DIR}/insmod.sh"
 if [[ -f "$_DZ_STYLE_SCRIPT" ]]; then
-    echo "[STYLE] Applying ${_DZ_STYLE_DIR} style mods..."
+    echo "[STYLE] Applying ${_DZ_STYLE_DIR} style mods (input=${_DZ_STYLE_ID})..."
     bash "$_DZ_STYLE_SCRIPT"
 else
     echo "[STYLE] No style mod script found at: $_DZ_STYLE_SCRIPT (skipping)"

@@ -518,10 +518,27 @@ def update_stage(stage_id: str, status: str, action: str = "", *, force: bool = 
 
     state.setdefault("events", []).append({"id": stage_id, "status": status, "label": label})
 
+    # Stage default actions (shown when no explicit action is provided)
+    _STAGE_DEFAULT_ACTIONS = {
+        "download":          "Downloading ROM",
+        "extract":           "Extracting ROM",
+        "unpack":            "Extracting ROM",
+        "mods":              "Applying ROM mods",
+        "rebuild":           "Rebuilding partitions",
+        "package_patches":   "Applying package patches",
+        "super":             "Building super.img",
+        "vbmeta":            "Signing vbmeta",
+        "zip":               "Creating final ZIP",
+        "upload_pixeldrain": "Uploading final ZIP to PixelDrain",
+        "finish":            "Build finished",
+        "failed":            "Build failed",
+    }
+
     if status == "RUN":
         state["current_stage_id"]    = stage_id
         state["current_stage_label"] = label
-        state["current_action"] = action  # always reset; clears stale action from prior stage
+        state["current_action"] = action or _STAGE_DEFAULT_ACTIONS.get(stage_id, "")
+        state["log_buffer"] = []  # clear stale log lines from previous stage
 
     if status in ("FAIL", "ERROR"):
         state["failed_stage"] = stage_id
