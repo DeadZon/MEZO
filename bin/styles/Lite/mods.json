@@ -111,7 +111,7 @@
       "script_path": "bin/modfile/UpdateFile/insupdate.sh",
       "enabled": true,
       "required": false,
-      "description": "UpdateFile ROM mods (device patches, region fixes, theme, fonts). DeadZone_FrameworkPatcher and DeadZone_KaoriosToolbox in UpdateFile remain gated by their env flags to prevent duplicate execution."
+      "description": "UpdateFile ROM mods (device patches, region fixes, theme, fonts). Legacy overlapping modules inside UpdateFile/ are gated by ENABLE_LEGACY_DEADZONE_FRAMEWORK_PATCHER, ENABLE_LEGACY_DEADZONE_JARMODS, ENABLE_LEGACY_DEADZONE_KAORIOS_TOOLBOX — all default false when ENABLE_DEADZONE_PACKAGE_PATCHES=true."
     },
     {
       "id": "poco_launcher_to_miuihome_spoofing",

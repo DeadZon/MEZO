@@ -172,9 +172,14 @@ class TestStyleInheritance:
 class TestUpdateFileNoduplication:
     def test_framework_patcher_gate_prevents_duplication(self):
         content = FW_PATCHER_INSTALL.read_text(encoding="utf-8")
-        # Must have the env flag gate that defaults to disabled
-        assert "ENABLE_DEADZONE_FRAMEWORK_PATCHER" in content, (
-            "DeadZone_FrameworkPatcher/install.sh must check ENABLE_DEADZONE_FRAMEWORK_PATCHER"
+        # Accept both old flag name and the new ENABLE_LEGACY_* name
+        has_gate = (
+            "ENABLE_DEADZONE_FRAMEWORK_PATCHER" in content
+            or "ENABLE_LEGACY_DEADZONE_FRAMEWORK_PATCHER" in content
+        )
+        assert has_gate, (
+            "DeadZone_FrameworkPatcher/install.sh must check "
+            "ENABLE_LEGACY_DEADZONE_FRAMEWORK_PATCHER (or legacy ENABLE_DEADZONE_FRAMEWORK_PATCHER)"
         )
         assert "false" in content.lower() or "exit 0" in content, (
             "Gate must default to false / exit 0 to prevent duplicate execution"
@@ -182,8 +187,14 @@ class TestUpdateFileNoduplication:
 
     def test_kaorios_toolbox_gate_prevents_duplication(self):
         content = KAORIOS_INSTALL.read_text(encoding="utf-8")
-        assert "ENABLE_DEADZONE_KAORIOS_TOOLBOX" in content, (
-            "DeadZone_KaoriosToolbox/install.sh must check ENABLE_DEADZONE_KAORIOS_TOOLBOX"
+        # Accept both old flag name and the new ENABLE_LEGACY_* name
+        has_gate = (
+            "ENABLE_DEADZONE_KAORIOS_TOOLBOX" in content
+            or "ENABLE_LEGACY_DEADZONE_KAORIOS_TOOLBOX" in content
+        )
+        assert has_gate, (
+            "DeadZone_KaoriosToolbox/install.sh must check "
+            "ENABLE_LEGACY_DEADZONE_KAORIOS_TOOLBOX (or legacy ENABLE_DEADZONE_KAORIOS_TOOLBOX)"
         )
         assert "false" in content.lower() or "exit 0" in content, (
             "Gate must default to false / exit 0 to prevent duplicate execution"

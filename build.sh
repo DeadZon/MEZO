@@ -166,7 +166,10 @@ else
 fi
 unset _DZ_STYLE_ID _DZ_STYLE_DIR _DZ_STYLE_SCRIPT
 
-if [ "${ENABLE_DEADZONE_PACKAGE_PATCHES:-true}" = "true" ]; then
+: "${ENABLE_DEADZONE_PACKAGE_PATCHES:=true}"
+if [ "${ENABLE_DEADZONE_PACKAGE_PATCHES}" = "true" ]; then
+    echo "[package] ENABLE_DEADZONE_PACKAGE_PATCHES=true"
+    echo "[package] Using upstream bin/package as authoritative package patch system"
     WORK_DIR="$work_dir" TOOLS_DIR="$work_dir/bin/apktool" bash "$work_dir/bin/package/patchpackage.sh"
 else
     echo "[package] ENABLE_DEADZONE_PACKAGE_PATCHES=false — skipping patchpackage.sh"

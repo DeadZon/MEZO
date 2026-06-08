@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DeadZone MEZO JAR Mods — unified installer
+# DeadZone MEZO JAR Mods — legacy unified installer
 #
 # Runs for ALL DeadZone styles (Stable, Legend, and future styles).
 # Automatically discovered and executed by bin/modfile/UpdateFile/insupdate.sh.
@@ -14,18 +14,24 @@
 #   - miui-services    (remove WMServiceConnection)
 #   - miui-wifi-service (MiuiWifiService country code observer)
 #
-# This is a base DeadZone feature, not style-specific.
-#
-# TEMPORARILY DISABLED — feature flag ENABLE_DEADZONE_JAR_MODS controls execution.
-# Set ENABLE_DEADZONE_JAR_MODS=true to re-enable.
+# Control flags:
+#   ENABLE_DEADZONE_PACKAGE_PATCHES  (default: true)  — upstream COREPATCH active
+#   ENABLE_LEGACY_DEADZONE_JARMODS   (default: false) — set true to re-enable
 
 set -euo pipefail
 
 work_dir=$(pwd)
 source "$work_dir/functions.sh"
 
-if [ "${ENABLE_DEADZONE_JAR_MODS:-false}" != "true" ]; then
-    mods "[DeadZone_JarMods] Temporarily disabled — skipping JAR patch engine"
+_pkg_patches="${ENABLE_DEADZONE_PACKAGE_PATCHES:-true}"
+_legacy_jar="${ENABLE_LEGACY_DEADZONE_JARMODS:-false}"
+
+if [ "$_legacy_jar" != "true" ]; then
+    if [ "$_pkg_patches" = "true" ]; then
+        echo "[legacy-overlap] Skipping DeadZone_JarMods because bin/package/COREPATCH is active"
+    else
+        mods "[DeadZone_JarMods] Disabled — set ENABLE_LEGACY_DEADZONE_JARMODS=true to enable"
+    fi
     exit 0
 fi
 
