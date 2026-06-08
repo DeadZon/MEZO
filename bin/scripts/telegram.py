@@ -98,10 +98,33 @@ def _github_ctx() -> dict:
         "run":      os.environ.get("GITHUB_RUN_NUMBER", ""),
         "actor":    os.environ.get("GITHUB_ACTOR", ""),
         "sha":      (os.environ.get("GITHUB_SHA", "") or "")[:7],
-        "branch":   os.environ.get("GITHUB_REF_NAME", ""),
         "url":      f"{server}/{repo}/actions/runs/{run_id}" if run_id else "",
         "soc":      os.environ.get("TG_SOC", ""),
     }
+
+
+def _normalize_style(raw: str) -> str:
+    key = raw.strip().lower()
+    if key in ("lite",):
+        return "Lite"
+    if key in ("plus", "stable", "free"):
+        return "Plus"
+    if key in ("legend", "paid"):
+        return "Legend"
+    if key in ("ninja",):
+        return "Ninja"
+    return raw.strip() or "Lite"
+
+
+def _get_style() -> str:
+    """Read active build style from environment, normalized to display name."""
+    raw = (
+        os.environ.get("STYLE") or
+        os.environ.get("INPUT_STYLE") or
+        os.environ.get("DZ_STYLE_ID") or
+        ""
+    )
+    return _normalize_style(raw) if raw else "Lite"
 
 
 # ── Credentials ───────────────────────────────────────────────────────────────
@@ -287,12 +310,19 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
 
     soc       = state.get("soc") or gh.get("soc") or ""
     soc_label = {"mtk": "MTK", "snapdragon": "Snapdragon"}.get(soc.lower(), soc.upper() or "—")
-    device    = dev.get("device") or dev.get("code") or "Detecting…"
+    _file_device = dev.get("device") or dev.get("code") or ""
+    device    = (
+        os.environ.get("DEVICE_CODENAME") or
+        os.environ.get("CODENAME") or
+        os.environ.get("CUSTOM_CODENAME") or
+        (None if _file_device == "devicecode" else _file_device) or
+        "Detecting…"
+    )
     rom_ver   = dev.get("rom") or "—"
     android   = dev.get("ver") or ""
     rom_os    = dev.get("os") or dev.get("ostype") or "HyperOS"
     os_label  = f"{rom_os} / Android {android}" if android else rom_os
-    branch    = gh.get("branch") or "—"
+    style     = _get_style()
     sha       = gh.get("sha") or "—"
 
     elapsed     = _elapsed_str(state.get("started_at", time.time()))
@@ -322,7 +352,7 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
     out.append(f"🧩 SoC:     {soc_label}")
     out.append(f"💿 ROM:     {rom_ver}")
     out.append(f"🤖 OS:      {os_label}")
-    out.append(f"🌿 Branch:  {branch}")
+    out.append(f"🎨 Style:   {style}")
     out.append(f"🔖 Commit:  {sha}")
     out.append("")
 
@@ -387,6 +417,10 @@ def format_message(state: dict, build_status: str, upload_url: str = "") -> str:
         out.append("📝 Last Log:")
         for ln in log_buf[-LOG_BUFFER_MAX:]:
             out.append(f"  {ln[:72]}")
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    out.append("")
+    out.append("Project DeadZone By MEZO Enjoy")
 
     return "\n".join(out)
 

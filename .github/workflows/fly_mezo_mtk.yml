@@ -109,4 +109,5 @@ jobs:
             --env "GITHUB_SHA=${{ github.sha }}" \
             --env "GITHUB_SERVER_URL=${{ github.server_url }}" \
             --env "GITHUB_WORKFLOW=MEZO Fly MTK" \
+            --env "MEZO_BACKEND=Fly.io" \
             --rm

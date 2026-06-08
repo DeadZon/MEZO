@@ -42,6 +42,8 @@ fi
 
 # ── Telegram SOC label ────────────────────────────────────────────────────────
 export TG_SOC="${SOC:-mtk}"
+export STYLE="${STYLE:-Lite}"
+export MEZO_BACKEND="${MEZO_BACKEND:-Fly.io}"
 
 # ── sudo handling — root in Docker runs commands directly ─────────────────────
 if [ "$(id -u)" -eq 0 ]; then

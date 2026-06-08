@@ -86,10 +86,12 @@ jobs:
               exit 1
               ;;
           esac
-          echo "DZ_STYLE=${RAW_STYLE}"        >> "$GITHUB_ENV"
-          echo "DZ_STYLE_ID=${STYLE_ID}"      >> "$GITHUB_ENV"
-          echo "DZ_STYLE_NAME=${STYLE_NAME}"  >> "$GITHUB_ENV"
-          echo "DZ_STYLE_TIER=${STYLE_TIER}"  >> "$GITHUB_ENV"
+          echo "DZ_STYLE=${RAW_STYLE}"              >> "$GITHUB_ENV"
+          echo "DZ_STYLE_ID=${STYLE_ID}"           >> "$GITHUB_ENV"
+          echo "DZ_STYLE_NAME=${STYLE_NAME}"       >> "$GITHUB_ENV"
+          echo "DZ_STYLE_TIER=${STYLE_TIER}"       >> "$GITHUB_ENV"
+          echo "STYLE=${RAW_STYLE}"                >> "$GITHUB_ENV"
+          echo "MEZO_BACKEND=GitHub Actions"       >> "$GITHUB_ENV"
           echo "[STYLE] ${RAW_STYLE} → ${STYLE_ID} (${STYLE_NAME}, ${STYLE_TIER})"
 
       # ── Telegram: build started ───────────────────────────────────────────
